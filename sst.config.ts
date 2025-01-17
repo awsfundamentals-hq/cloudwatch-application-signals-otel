@@ -27,33 +27,80 @@ export default $config({
         ],
       }),
     });
+    const taskRole = new aws.iam.Role('taskRole', {
+      assumeRolePolicy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Principal: {
+              Service: 'ecs-tasks.amazonaws.com',
+            },
+            Action: 'sts:AssumeRole',
+          },
+        ],
+      }),
+    });
+    new aws.cloudwatch.LogGroup('logGroup', {
+      name: '/ecs/awsfundamentals',
+      retentionInDays: 7,
+    });
     new aws.iam.RolePolicyAttachment('executionRoleAttachment', {
       policyArn: 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy',
       role: executionRole,
     });
-    const taskDefinition = new aws.ecs.TaskDefinition('taskdefinition', {
-      requiresCompatibilities: ['FARGATE'],
-      family: 'awsfundamentals',
-      cpu: '256',
-      memory: '1024',
-      executionRoleArn: executionRole.arn,
-      containerDefinitions: JSON.stringify([
-        {
-          name: 'backend',
-          essential: true,
-          image: `${repository.repositoryUrl}:latest`,
-          memory: 512,
-          portMappings: [
-            {
-              containerPort: 3000,
-              hostPort: 80,
-              protocol: 'tcp',
-              appProtocol: 'http',
-            },
-          ],
-        },
-      ]),
+    const logPolicy = new aws.iam.Policy('logPolicy', {
+      policy: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+            Resource: 'arn:aws:logs:*:*:*',
+          },
+        ],
+      }),
     });
+    new aws.iam.RolePolicyAttachment('taskRoleAttachment', {
+      policyArn: logPolicy.arn,
+      role: taskRole,
+    });
+    const taskDefinition = repository.repositoryUrl.apply(
+      (url) =>
+        new aws.ecs.TaskDefinition('taskdefinition', {
+          requiresCompatibilities: ['FARGATE'],
+          family: 'awsfundamentals',
+          cpu: '256',
+          memory: '1024',
+          networkMode: 'awsvpc',
+          executionRoleArn: executionRole.arn,
+          taskRoleArn: taskRole.arn,
+          containerDefinitions: JSON.stringify([
+            {
+              name: 'backend',
+              essential: true,
+              image: `${url}:latest`,
+              memory: 1024,
+              portMappings: [
+                {
+                  containerPort: 80,
+                  hostPort: 80,
+                  protocol: 'tcp',
+                  appProtocol: 'http',
+                },
+              ],
+              logConfiguration: {
+                logDriver: 'awslogs',
+                options: {
+                  'awslogs-group': '/ecs/awsfundamentals',
+                  'awslogs-region': 'us-east-1',
+                  'awslogs-stream-prefix': 'ecs',
+                },
+              },
+            },
+          ]),
+        })
+    );
     const vpc = new aws.ec2.Vpc('vpc', {
       cidrBlock: '172.16.0.0/16',
     });
@@ -67,6 +114,26 @@ export default $config({
       cidrBlock: '172.16.2.0/24',
       availabilityZone: 'us-east-1b',
     });
+    const internetGateway = new aws.ec2.InternetGateway('internetGateway', {
+      vpcId: vpc.id,
+    });
+    const routeTable = new aws.ec2.RouteTable('routeTable', {
+      vpcId: vpc.id,
+      routes: [
+        {
+          cidrBlock: '0.0.0.0/0',
+          gatewayId: internetGateway.id,
+        },
+      ],
+    });
+    new aws.ec2.RouteTableAssociation('subnet1RouteTableAssociation', {
+      subnetId: subnet1.id,
+      routeTableId: routeTable.id,
+    });
+    new aws.ec2.RouteTableAssociation('subnet2RouteTableAssociation', {
+      subnetId: subnet2.id,
+      routeTableId: routeTable.id,
+    });
     const securityGroup = new aws.ec2.SecurityGroup('securityGroup', {
       vpcId: vpc.id,
       ingress: [
@@ -74,13 +141,28 @@ export default $config({
           fromPort: 80,
           toPort: 80,
           protocol: 'tcp',
+          cidrBlocks: ['0.0.0.0/0'],
+        },
+      ],
+      egress: [
+        {
+          fromPort: 443,
+          toPort: 443,
+          protocol: 'tcp',
+          cidrBlocks: ['0.0.0.0/0'],
+        },
+        {
+          fromPort: 80,
+          toPort: 80,
+          protocol: 'tcp',
+          cidrBlocks: ['0.0.0.0/0'],
         },
       ],
     });
     const loadBalancer = new aws.lb.LoadBalancer('loadBalancer', {
       internal: false,
       securityGroups: [securityGroup.id],
-      subnets: [subnet1.id],
+      subnets: [subnet1.id, subnet2.id],
     });
     const targetGroup = new aws.lb.TargetGroup('targetGroup', {
       port: 80,
