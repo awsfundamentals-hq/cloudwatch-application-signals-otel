@@ -17,7 +17,7 @@ aws ecr get-login-password --region us-east-1 | docker login --username AWS --pa
 
 pushd $SCRIPT_DIR > /dev/null
 
-  docker build -t awsfundamentals .
+  docker buildx build --platform linux/amd64 -t awsfundamentals .
   docker tag awsfundamentals:latest $REPO_URL:latest
   docker push $REPO_URL:latest
 
