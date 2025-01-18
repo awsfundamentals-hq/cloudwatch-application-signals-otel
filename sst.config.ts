@@ -226,7 +226,7 @@ const createNetworking = () => {
       },
     ],
   });
-  return { vpc, subnets: [subnet1, subnet2], securityGroup, targetGroup };
+  return { vpc, subnets: [subnet1, subnet2], securityGroup, targetGroup, loadBalancer };
 };
 
 /**
@@ -277,9 +277,11 @@ export default $config({
 
     const taskDefinition = createTaskDefinition({ repositoryUrl, taskRole, executionRole });
 
-    const { subnets, securityGroup, targetGroup } = createNetworking();
+    const { subnets, securityGroup, targetGroup, loadBalancer } = createNetworking();
 
     createClusterAndService({ taskDefinition, securityGroup, subnets, targetGroup });
+
+    loadBalancer.dnsName.apply((dnsName) => console.info(`LoadBalancer Endpoint: http://${dnsName}`));
 
     new sst.aws.Nextjs('frontend');
   },
