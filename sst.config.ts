@@ -132,6 +132,23 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
                 'awslogs-stream-prefix': 'ecs',
               },
             },
+            healthCheck: {
+              command: ['CMD-SHELL', 'curl -f http://localhost:80/ || exit 1'],
+              interval: 30,
+              timeout: 5,
+              retries: 3,
+              startPeriod: 0,
+            },
+            environment: [
+              {
+                name: 'ECS_CONTAINER_METADATA_URI',
+                value: 'http://169.254.170.2/v4',
+              },
+              {
+                name: 'ECS_ENABLE_CONTAINER_METADATA',
+                value: 'true',
+              },
+            ],
           },
         ]),
       })
@@ -144,16 +161,23 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
 const createNetworking = () => {
   const vpc = new aws.ec2.Vpc('vpc', {
     cidrBlock: '172.16.0.0/16',
+    tags: { Name: 'awsfundamentals' },
   });
   const subnet1 = new aws.ec2.Subnet('subnet', {
     vpcId: vpc.id,
     cidrBlock: '172.16.1.0/24',
     availabilityZone: 'us-east-1a',
+    tags: {
+      Name: 'awsfundamentals-us-east-1a',
+    },
   });
   const subnet2 = new aws.ec2.Subnet('subnet2', {
     vpcId: vpc.id,
     cidrBlock: '172.16.2.0/24',
     availabilityZone: 'us-east-1b',
+    tags: {
+      Name: 'awsfundamentals-us-east-1b',
+    },
   });
   const internetGateway = new aws.ec2.InternetGateway('internetGateway', {
     vpcId: vpc.id,
@@ -199,13 +223,18 @@ const createNetworking = () => {
         cidrBlocks: ['0.0.0.0/0'],
       },
     ],
+    tags: {
+      Name: 'awsfundamentals',
+    },
   });
   const loadBalancer = new aws.lb.LoadBalancer('loadBalancer', {
+    name: 'awsfundamentals',
     internal: false,
     securityGroups: [securityGroup.id],
     subnets: [subnet1.id, subnet2.id],
   });
   const targetGroup = new aws.lb.TargetGroup('targetGroup', {
+    name: 'awsfundamentals',
     port: 80,
     protocol: 'HTTP',
     targetType: 'ip',
@@ -225,6 +254,9 @@ const createNetworking = () => {
         targetGroupArn: targetGroup.arn,
       },
     ],
+    tags: {
+      Name: 'awsfundamentals',
+    },
   });
   return { vpc, subnets: [subnet1, subnet2], securityGroup, targetGroup, loadBalancer };
 };
@@ -242,6 +274,7 @@ const createClusterAndService = (params: {
   const { taskDefinition, securityGroup, subnets, targetGroup } = params;
   const cluster = new aws.ecs.Cluster('cluster', { name: 'awsfundamentals' });
   new aws.ecs.Service('service', {
+    name: 'awsfundamentals',
     cluster: cluster.arn,
     desiredCount: 1,
     launchType: 'FARGATE',
@@ -283,6 +316,10 @@ export default $config({
 
     loadBalancer.dnsName.apply((dnsName) => console.info(`LoadBalancer Endpoint: http://${dnsName}`));
 
-    new sst.aws.Nextjs('frontend');
+    new sst.aws.Nextjs('frontend', {
+      environment: {
+        NEXT_PUBLIC_BACKEND_URL: loadBalancer.dnsName,
+      },
+    });
   },
 });

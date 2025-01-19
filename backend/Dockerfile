@@ -1,14 +1,16 @@
-# the image base: a simple Linux-based image
+# Use the Node.js 22 Alpine image as the base
 FROM node:22-alpine
-# set our working directory in our image
+# Install curl
+RUN apk add --no-cache curl
+# Set the working directory
 WORKDIR /app
-# copy our package.json which includes our dependencies
+# Copy package.json and install dependencies
 COPY package.json .
-# install our dependencies
+# Install the dependencies
 RUN npm install
-# copy our actual application code
+# Copy the application code
 COPY *.js .
-# expose the port on which we run our application
+# Expose port 80
 EXPOSE 80
-# run the application
+# Start the application
 CMD ["npm", "start"]
