@@ -133,7 +133,7 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
               },
             },
             healthCheck: {
-              command: ['CMD-SHELL', 'curl -f http://localhost:80/ || exit 1'],
+              command: ['CMD-SHELL', 'curl -f http://localhost/ || exit 1'],
               interval: 30,
               timeout: 5,
               retries: 3,
