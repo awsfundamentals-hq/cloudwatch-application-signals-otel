@@ -21,10 +21,9 @@ This application is a simple Node.js app that runs in a Docker container, deploy
 
 ## Project Structure
 
-- `app.js`: Main application file
-- `Dockerfile`: Docker configuration file
-- `package.json`: Node.js package configuration
-- `sst.config.ts`: SST configuration file
+- `backend`: Containing the backend files
+- `app`: The simple Next.js-based frontend
+- `sst.config.ts`: SST/Pulumi-based infrastructure configuration
 
 ## Learn More
 
