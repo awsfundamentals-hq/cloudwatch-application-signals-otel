@@ -6,7 +6,8 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "docker:build": "chmod +x ./backend/build.sh && ./backend/build.sh"
   },
   "dependencies": {
     "next": "15.1.4",
