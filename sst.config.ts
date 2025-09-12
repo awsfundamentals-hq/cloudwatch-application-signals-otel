@@ -1,6 +1,28 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="./.sst/platform/config.d.ts" />
 
+const createOtelConfigSsm = () => {
+  return new aws.ssm.Parameter('otelConfig', {
+    name: '/ecs/awsfundamentals/otel-config.yaml',
+    type: 'String',
+    value: `
+receivers:
+  otlp:
+    protocols:
+      grpc:
+      http:
+exporters:
+  awsxray:
+    region: us-east-1
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [awsxray]
+    `,
+  });
+};
+
 /**
  * Create the ECR repository.
  * We expire untagged images so we don't pay for them.
@@ -67,8 +89,12 @@ const createRoles = () => {
       ],
     }),
   });
-  new aws.cloudwatch.LogGroup('logGroup', {
-    name: '/ecs/awsfundamentals',
+  new aws.cloudwatch.LogGroup('logGroupBackend', {
+    name: '/ecs/awsfundamentals/backend',
+    retentionInDays: 7,
+  });
+  new aws.cloudwatch.LogGroup('logGroupAwsOtelCollector', {
+    name: '/ecs/awsfundamentals/aws-otel-collector',
     retentionInDays: 7,
   });
   new aws.iam.RolePolicyAttachment('executionRoleAttachment', {
@@ -87,6 +113,28 @@ const createRoles = () => {
       ],
     }),
   });
+  const xrayPolicy = new aws.iam.Policy('xrayPolicy', {
+    policy: JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        { Effect: 'Allow', Action: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords', 'xray:PutServiceMetrics'], Resource: '*' },
+      ],
+    }),
+  });
+  const readFromSsmPolicy = new aws.iam.Policy('readFromSsmPolicy', {
+    policy: JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [{ Effect: 'Allow', Action: ['ssm:GetParameter'], Resource: '*' }],
+    }),
+  });
+  new aws.iam.RolePolicyAttachment('taskRoleAttachmentXray', {
+    policyArn: xrayPolicy.arn,
+    role: taskRole,
+  });
+  new aws.iam.RolePolicyAttachment('taskRoleAttachmentReadFromSsm', {
+    policyArn: readFromSsmPolicy.arn,
+    role: taskRole,
+  });
   new aws.iam.RolePolicyAttachment('taskRoleAttachment', {
     policyArn: logPolicy.arn,
     role: taskRole,
@@ -99,9 +147,10 @@ const createRoles = () => {
  * This is the configuration for the ECS task that will run the Docker container.
  */
 const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; taskRole: aws.iam.Role; executionRole: aws.iam.Role }) => {
+  const otelConfig = createOtelConfigSsm();
   const { repositoryUrl, taskRole, executionRole } = params;
-  return repositoryUrl.apply(
-    (url) =>
+  return $util.all([repositoryUrl, otelConfig.name]).apply(
+    ([url, otelConfigName]) =>
       new aws.ecs.TaskDefinition('taskdefinition', {
         requiresCompatibilities: ['FARGATE'],
         family: 'awsfundamentals',
@@ -127,7 +176,7 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
             logConfiguration: {
               logDriver: 'awslogs',
               options: {
-                'awslogs-group': '/ecs/awsfundamentals',
+                'awslogs-group': '/ecs/awsfundamentals/backend',
                 'awslogs-region': 'us-east-1',
                 'awslogs-stream-prefix': 'ecs',
               },
@@ -148,6 +197,62 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
                 name: 'ECS_ENABLE_CONTAINER_METADATA',
                 value: 'true',
               },
+              {
+                name: 'AWS_XRAY_APP_SIGNALS_ENABLE',
+                value: 'true',
+              },
+              {
+                name: 'OTEL_SERVICE_NAME',
+                value: 'awsfundamentals',
+              },
+              {
+                name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+                value: 'http://localhost:4317',
+              },
+              {
+                name: 'OTEL_TRACES_EXPORTER',
+                value: 'otlp',
+              },
+              {
+                name: 'OTEL_METRICS_EXPORTER',
+                value: 'none',
+              },
+              {
+                name: 'OTEL_RESOURCE_ATTRIBUTES',
+                value: 'deployment.environment=prod',
+              },
+              {
+                name: 'OTEL_TRACES_SAMPLER',
+                value: 'parentbased_traceidratio',
+              },
+              {
+                name: 'OTEL_TRACES_SAMPLER_ARG',
+                value: '0.25',
+              },
+            ],
+          },
+          {
+            name: 'aws-otel-collector',
+            image: 'amazon/aws-otel-collector',
+            essential: true,
+            logConfiguration: {
+              logDriver: 'awslogs',
+              options: {
+                'awslogs-group': '/ecs/awsfundamentals/aws-otel-collector',
+                'awslogs-region': 'us-east-1',
+                'awslogs-stream-prefix': 'ecs',
+              },
+            },
+            healthCheck: {
+              command: ['/healthcheck'],
+              interval: 5,
+              timeout: 6,
+              retries: 5,
+              startPeriod: 1,
+            },
+            environment: [
+              { name: 'AWS_REGION', value: 'us-east-1' },
+              { name: 'AOT_CONFIG_CONTENT', valueFrom: `ssm:${otelConfigName}` },
             ],
           },
         ]),
@@ -208,6 +313,12 @@ const createNetworking = () => {
         protocol: 'tcp',
         cidrBlocks: ['0.0.0.0/0'],
       },
+      {
+        fromPort: 4317,
+        toPort: 4317,
+        protocol: 'tcp',
+        cidrBlocks: ['0.0.0.0/0'],
+      },
     ],
     egress: [
       {
@@ -219,6 +330,12 @@ const createNetworking = () => {
       {
         fromPort: 80,
         toPort: 80,
+        protocol: 'tcp',
+        cidrBlocks: ['0.0.0.0/0'],
+      },
+      {
+        fromPort: 4317,
+        toPort: 4317,
         protocol: 'tcp',
         cidrBlocks: ['0.0.0.0/0'],
       },
@@ -301,6 +418,12 @@ export default $config({
       removal: input?.stage === 'production' ? 'retain' : 'remove',
       protect: ['production'].includes(input?.stage),
       home: 'aws',
+      providers: {
+        aws: {
+          region: 'us-east-1',
+          profile: 'awsfun-handson',
+        },
+      },
     };
   },
   async run() {
@@ -315,11 +438,5 @@ export default $config({
     createClusterAndService({ taskDefinition, securityGroup, subnets, targetGroup });
 
     loadBalancer.dnsName.apply((dnsName) => console.info(`LoadBalancer Endpoint: http://${dnsName}`));
-
-    new sst.aws.Nextjs('frontend', {
-      environment: {
-        NEXT_PUBLIC_BACKEND_URL: loadBalancer.dnsName,
-      },
-    });
   },
 });

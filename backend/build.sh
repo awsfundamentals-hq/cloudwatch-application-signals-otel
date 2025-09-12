@@ -11,16 +11,19 @@ if [ $? -ne 0 ]; then
 fi
 
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+echo "AWS Account ID: $AWS_ACCOUNT_ID"
+
 REPO_URL=$AWS_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/awsfundamentals
 
 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REPO_URL
 
-pushd $SCRIPT_DIR > /dev/null
+echo "Repository URL: $REPO_URL"
+echo "Script Directory: $SCRIPT_DIR"
 
-  docker buildx build --platform linux/amd64 -t awsfundamentals .
+pushd $SCRIPT_DIR > /dev/null
+  docker buildx build --platform linux/amd64 -t awsfundamentals --load .
   docker tag awsfundamentals:latest $REPO_URL:latest
   docker push $REPO_URL:latest
-
 popd > /dev/null
 
 echo -e "\033[32mSuccessfully pushed our image to ECR! 🚀\033[0m"
