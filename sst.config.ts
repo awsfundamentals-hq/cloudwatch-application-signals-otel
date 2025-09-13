@@ -179,6 +179,62 @@ const createRoles = () => {
 };
 
 /**
+ * Create a Lambda function with Function URL enabled.
+ */
+const createLambdaFunction = () => {
+  const lambdaFunction = new sst.aws.Function('lambdaFunction', {
+    name: 'awsfundamentals-hello-lambda',
+    runtime: aws.lambda.Runtime.NodeJS20dX,
+    handler: 'lambda/handler.handler',
+    role: createLambdaRole().arn,
+    timeout: '30 seconds',
+    url: true,
+    transform: {
+      function: {
+        tracingConfig: {
+          mode: 'Active',
+        },
+      },
+    },
+  });
+
+  return { lambdaFunction };
+};
+
+/**
+ * Create IAM role for Lambda function.
+ */
+const createLambdaRole = () => {
+  const lambdaRole = new aws.iam.Role('lambdaExecutionRole', {
+    assumeRolePolicy: JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Principal: {
+            Service: 'lambda.amazonaws.com',
+          },
+          Action: 'sts:AssumeRole',
+        },
+      ],
+    }),
+  });
+
+  new aws.iam.RolePolicyAttachment('lambdaExecutionRoleAttachment', {
+    policyArn: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+    role: lambdaRole,
+  });
+
+  // Add X-Ray tracing permissions
+  new aws.iam.RolePolicyAttachment('lambdaXRayRoleAttachment', {
+    policyArn: 'arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess',
+    role: lambdaRole,
+  });
+
+  return lambdaRole;
+};
+
+/**
  * Create the ECS task definition.
  * This is the configuration for the ECS task that will run the Docker container.
  */
@@ -188,11 +244,12 @@ const createTaskDefinition = (params: {
   executionRole: aws.iam.Role;
   backendLogGroup: aws.cloudwatch.LogGroup;
   cwAgentLogGroup: aws.cloudwatch.LogGroup;
+  lambdaUrl: $util.Output<string>;
 }) => {
   const cwAgentConfig = createCwAgentConfigSsm();
-  const { repositoryUrl, taskRole, executionRole, backendLogGroup, cwAgentLogGroup } = params;
-  return $util.all([repositoryUrl, cwAgentConfig.name, backendLogGroup.name, cwAgentLogGroup.name]).apply(
-    ([url, cwAgentConfigName, backendLogGroupName, cwAgentLogGroupName]) =>
+  const { repositoryUrl, taskRole, executionRole, backendLogGroup, cwAgentLogGroup, lambdaUrl } = params;
+  return $util.all([repositoryUrl, cwAgentConfig.name, backendLogGroup.name, cwAgentLogGroup.name, lambdaUrl]).apply(
+    ([url, cwAgentConfigName, backendLogGroupName, cwAgentLogGroupName, lambdaFunctionUrl]) =>
       new aws.ecs.TaskDefinition('taskdefinition', {
         requiresCompatibilities: ['FARGATE'],
         family: 'awsfundamentals',
@@ -284,6 +341,10 @@ const createTaskDefinition = (params: {
               {
                 name: 'NODE_OPTIONS',
                 value: '--require /otel-auto-instrumentation-node/autoinstrumentation.js',
+              },
+              {
+                name: 'LAMBDA_FUNCTION_URL',
+                value: lambdaFunctionUrl,
               },
             ],
             mountPoints: [
@@ -504,12 +565,15 @@ export default $config({
 
     const { executionRole, taskRole } = createRoles();
 
+    const { lambdaFunction } = createLambdaFunction();
+
     const taskDefinition = createTaskDefinition({
       repositoryUrl,
       taskRole,
       executionRole,
       backendLogGroup,
       cwAgentLogGroup,
+      lambdaUrl: lambdaFunction.url,
     });
 
     const { subnets, securityGroup, targetGroup, loadBalancer } = createNetworking();
@@ -519,6 +583,7 @@ export default $config({
     // SLO can't be created via Pulumi yet as it's not supported yet
     createSnsTopicForSlo();
 
-    loadBalancer.dnsName.apply((dnsName) => console.info(`LoadBalancer Endpoint: http://${dnsName}`));
+    loadBalancer.dnsName.apply((dnsName) => console.info(`🪄 LoadBalancer Endpoint: http://${dnsName}`));
+    lambdaFunction.url.apply((url) => console.info(`🪄 Lambda Function URL: ${url}`));
   },
 });

@@ -24,6 +24,9 @@ importers:
       '@eslint/eslintrc':
         specifier: ^3
         version: 3.2.0
+      '@types/aws-lambda':
+        specifier: ^8.10.152
+        version: 8.10.152
       '@types/node':
         specifier: ^20
         version: 20.17.12
@@ -334,6 +337,9 @@ packages:
 
   '@tsconfig/bun@1.0.7':
     resolution: {integrity: sha512-udGrGJBNQdXGVulehc1aWT73wkR9wdaGBtB6yL70RJsqwW/yJhIg6ZbRlPOfIUiFNrnBuYLBi9CSmMKfDC7dvA==}
+
+  '@types/aws-lambda@8.10.152':
+    resolution: {integrity: sha512-soT/c2gYBnT5ygwiHPmd9a1bftj462NWVk2tKCc1PYHSIacB2UwbTS2zYG4jzag1mRDuzg/OjtxQjQ2NKRB6Rw==}
 
   '@types/estree@1.0.6':
     resolution: {integrity: sha512-AYnb1nQyY49te+VRAVgmzfcgjYS91mY5P0TKUDCLEM+gNnA+3T6rWITXRLYCpahpqSQbN5cE+gHpnPyXjHWxcw==}
@@ -2270,6 +2276,8 @@ snapshots:
       tslib: 2.8.1
 
   '@tsconfig/bun@1.0.7': {}
+
+  '@types/aws-lambda@8.10.152': {}
 
   '@types/estree@1.0.6': {}
 
