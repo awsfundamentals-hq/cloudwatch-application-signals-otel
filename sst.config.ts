@@ -23,6 +23,25 @@ const createCwAgentConfigSsm = () => {
 };
 
 /**
+ * Create SNS Topic for SLO Notifications
+ * This topic will receive alerts when the SLO is violated.
+ */
+const createSnsTopicForSlo = () => {
+  const topic = new aws.sns.Topic('sloNotificationTopic', {
+    name: 'awsfundamentals-slo-notifications',
+    displayName: 'AWS Fundamentals SLO Notifications',
+  });
+
+  new aws.sns.TopicSubscription('sloEmailSubscription', {
+    topic: topic.arn,
+    protocol: 'email',
+    endpoint: 'schmidt.tobias@outlook.com',
+  });
+
+  return topic;
+};
+
+/**
  * Create the ECR repository.
  * We expire untagged images so we don't pay for them.
  */
@@ -54,7 +73,7 @@ const createRepository = () => {
 
 /**
  * Create the CloudWatch log groups for ECS tasks.
- * 
+ *
  * • Backend log group: For the main application container logs
  * • CW-Agent log group: For the CloudWatch agent container logs
  */
@@ -63,12 +82,12 @@ const createLogGroups = () => {
     name: '/ecs/awsfundamentals/backend',
     retentionInDays: 7,
   });
-  
+
   const cwAgentLogGroup = new aws.cloudwatch.LogGroup('logGroupCwAgent', {
     name: '/ecs/awsfundamentals/cw-agent',
     retentionInDays: 7,
   });
-  
+
   return { backendLogGroup, cwAgentLogGroup };
 };
 
@@ -163,9 +182,9 @@ const createRoles = () => {
  * Create the ECS task definition.
  * This is the configuration for the ECS task that will run the Docker container.
  */
-const createTaskDefinition = (params: { 
-  repositoryUrl: $util.Output<string>; 
-  taskRole: aws.iam.Role; 
+const createTaskDefinition = (params: {
+  repositoryUrl: $util.Output<string>;
+  taskRole: aws.iam.Role;
   executionRole: aws.iam.Role;
   backendLogGroup: aws.cloudwatch.LogGroup;
   cwAgentLogGroup: aws.cloudwatch.LogGroup;
@@ -429,7 +448,6 @@ const createNetworking = () => {
   });
   return { vpc, subnets: [subnet1, subnet2], securityGroup, targetGroup, loadBalancer };
 };
-
 /**
  * Create the ECS cluster and service.
  * This is the ECS service that will run the ECS task.
@@ -472,6 +490,7 @@ export default $config({
       home: 'aws',
       providers: {
         aws: {
+          version: '7.7.0',
           region: 'us-east-1',
           profile: 'awsfun-handson',
         },
@@ -485,17 +504,20 @@ export default $config({
 
     const { executionRole, taskRole } = createRoles();
 
-    const taskDefinition = createTaskDefinition({ 
-      repositoryUrl, 
-      taskRole, 
-      executionRole, 
-      backendLogGroup, 
-      cwAgentLogGroup 
+    const taskDefinition = createTaskDefinition({
+      repositoryUrl,
+      taskRole,
+      executionRole,
+      backendLogGroup,
+      cwAgentLogGroup,
     });
 
     const { subnets, securityGroup, targetGroup, loadBalancer } = createNetworking();
 
     createClusterAndService({ taskDefinition, securityGroup, subnets, targetGroup });
+
+    // SLO can't be created via Pulumi yet as it's not supported yet
+    createSnsTopicForSlo();
 
     loadBalancer.dnsName.apply((dnsName) => console.info(`LoadBalancer Endpoint: http://${dnsName}`));
   },
