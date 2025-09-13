@@ -1,15 +1,12 @@
-require('./otel');
-
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const winston = require('winston');
-
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(winston.format.timestamp(), winston.format.errors({ stack: true }), winston.format.json()),
   defaultMeta: {
-    service: 'ecs-fargate-backend',
+    service: process.env.OTEL_SERVICE_NAME || 'awsfundamentals',
     environment: process.env.NODE_ENV || 'development',
     region: process.env.AWS_REGION || 'local',
   },

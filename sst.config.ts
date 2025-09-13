@@ -1,24 +1,23 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="./.sst/platform/config.d.ts" />
 
-const createOtelConfigSsm = () => {
-  return new aws.ssm.Parameter('otelConfig', {
-    name: '/ecs/awsfundamentals/otel-config.yaml',
+const createCwAgentConfigSsm = () => {
+  return new aws.ssm.Parameter('cwAgentConfig', {
+    name: '/ecs/awsfundamentals/cw-agent-config',
     type: 'String',
     value: `
-receivers:
-  otlp:
-    protocols:
-      grpc:
-      http:
-exporters:
-  awsxray:
-    region: us-east-1
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [awsxray]
+{
+  "traces": {
+    "traces_collected": {
+      "application_signals": {}
+    }
+  },
+  "logs": {
+    "metrics_collected": {
+      "application_signals": {}
+    }
+  }
+}
     `,
   });
 };
@@ -54,8 +53,27 @@ const createRepository = () => {
 };
 
 /**
+ * Create the CloudWatch log groups for ECS tasks.
+ * 
+ * • Backend log group: For the main application container logs
+ * • CW-Agent log group: For the CloudWatch agent container logs
+ */
+const createLogGroups = () => {
+  const backendLogGroup = new aws.cloudwatch.LogGroup('logGroupBackend', {
+    name: '/ecs/awsfundamentals/backend',
+    retentionInDays: 7,
+  });
+  
+  const cwAgentLogGroup = new aws.cloudwatch.LogGroup('logGroupCwAgent', {
+    name: '/ecs/awsfundamentals/cw-agent',
+    retentionInDays: 7,
+  });
+  
+  return { backendLogGroup, cwAgentLogGroup };
+};
+
+/**
  * Create the necessary roles for ECS: execution role and task role.
- * Also create the log group for the ECS tasks.
  *
  * • ECS Task Execution Role: Allows ECS to manage the task execution.
  * • ECS Task Role: Allows the task to interact with other AWS services.
@@ -89,14 +107,6 @@ const createRoles = () => {
       ],
     }),
   });
-  new aws.cloudwatch.LogGroup('logGroupBackend', {
-    name: '/ecs/awsfundamentals/backend',
-    retentionInDays: 7,
-  });
-  new aws.cloudwatch.LogGroup('logGroupAwsOtelCollector', {
-    name: '/ecs/awsfundamentals/aws-otel-collector',
-    retentionInDays: 7,
-  });
   new aws.iam.RolePolicyAttachment('executionRoleAttachment', {
     policyArn: 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy',
     role: executionRole,
@@ -124,7 +134,10 @@ const createRoles = () => {
   const readFromSsmPolicy = new aws.iam.Policy('readFromSsmPolicy', {
     policy: JSON.stringify({
       Version: '2012-10-17',
-      Statement: [{ Effect: 'Allow', Action: ['ssm:GetParameter'], Resource: '*' }],
+      Statement: [
+        { Effect: 'Allow', Action: ['ssm:GetParameter'], Resource: '*' },
+        { Effect: 'Allow', Action: ['ssm:GetParameters'], Resource: '*' },
+      ],
     }),
   });
   new aws.iam.RolePolicyAttachment('taskRoleAttachmentXray', {
@@ -133,10 +146,14 @@ const createRoles = () => {
   });
   new aws.iam.RolePolicyAttachment('taskRoleAttachmentReadFromSsm', {
     policyArn: readFromSsmPolicy.arn,
-    role: taskRole,
+    role: executionRole,
   });
   new aws.iam.RolePolicyAttachment('taskRoleAttachment', {
     policyArn: logPolicy.arn,
+    role: taskRole,
+  });
+  new aws.iam.RolePolicyAttachment('taskRoleAttachmentCloudWatchAgent', {
+    policyArn: 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy',
     role: taskRole,
   });
   return { executionRole, taskRole };
@@ -146,25 +163,31 @@ const createRoles = () => {
  * Create the ECS task definition.
  * This is the configuration for the ECS task that will run the Docker container.
  */
-const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; taskRole: aws.iam.Role; executionRole: aws.iam.Role }) => {
-  const otelConfig = createOtelConfigSsm();
-  const { repositoryUrl, taskRole, executionRole } = params;
-  return $util.all([repositoryUrl, otelConfig.name]).apply(
-    ([url, otelConfigName]) =>
+const createTaskDefinition = (params: { 
+  repositoryUrl: $util.Output<string>; 
+  taskRole: aws.iam.Role; 
+  executionRole: aws.iam.Role;
+  backendLogGroup: aws.cloudwatch.LogGroup;
+  cwAgentLogGroup: aws.cloudwatch.LogGroup;
+}) => {
+  const cwAgentConfig = createCwAgentConfigSsm();
+  const { repositoryUrl, taskRole, executionRole, backendLogGroup, cwAgentLogGroup } = params;
+  return $util.all([repositoryUrl, cwAgentConfig.name, backendLogGroup.name, cwAgentLogGroup.name]).apply(
+    ([url, cwAgentConfigName, backendLogGroupName, cwAgentLogGroupName]) =>
       new aws.ecs.TaskDefinition('taskdefinition', {
         requiresCompatibilities: ['FARGATE'],
         family: 'awsfundamentals',
         cpu: '256',
-        memory: '1024',
+        memory: '512',
         networkMode: 'awsvpc',
         executionRoleArn: executionRole.arn,
         taskRoleArn: taskRole.arn,
+        volumes: [{ name: 'opentelemetry-auto-instrumentation-node' }],
         containerDefinitions: JSON.stringify([
           {
             name: 'backend',
             essential: true,
             image: `${url}:latest`,
-            memory: 1024,
             portMappings: [
               {
                 containerPort: 80,
@@ -176,7 +199,7 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
             logConfiguration: {
               logDriver: 'awslogs',
               options: {
-                'awslogs-group': '/ecs/awsfundamentals/backend',
+                'awslogs-group': backendLogGroupName,
                 'awslogs-region': 'us-east-1',
                 'awslogs-stream-prefix': 'ecs',
               },
@@ -188,6 +211,12 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
               retries: 3,
               startPeriod: 0,
             },
+            dependsOn: [
+              {
+                containerName: 'init',
+                condition: 'SUCCESS',
+              },
+            ],
             environment: [
               {
                 name: 'ECS_CONTAINER_METADATA_URI',
@@ -198,61 +227,84 @@ const createTaskDefinition = (params: { repositoryUrl: $util.Output<string>; tas
                 value: 'true',
               },
               {
-                name: 'AWS_XRAY_APP_SIGNALS_ENABLE',
-                value: 'true',
+                name: 'OTEL_RESOURCE_ATTRIBUTES',
+                value: `aws.log.group.names=${backendLogGroupName},service.name=awsfundamentals`,
               },
               {
-                name: 'OTEL_SERVICE_NAME',
-                value: 'awsfundamentals',
-              },
-              {
-                name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
-                value: 'http://localhost:4317',
-              },
-              {
-                name: 'OTEL_TRACES_EXPORTER',
-                value: 'otlp',
+                name: 'OTEL_LOGS_EXPORTER',
+                value: 'none',
               },
               {
                 name: 'OTEL_METRICS_EXPORTER',
                 value: 'none',
               },
               {
-                name: 'OTEL_RESOURCE_ATTRIBUTES',
-                value: 'deployment.environment=prod',
+                name: 'OTEL_EXPORTER_OTLP_PROTOCOL',
+                value: 'http/protobuf',
+              },
+              {
+                name: 'OTEL_AWS_APPLICATION_SIGNALS_ENABLED',
+                value: 'true',
+              },
+              {
+                name: 'OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT',
+                value: 'http://localhost:4316/v1/metrics',
+              },
+              {
+                name: 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+                value: 'http://localhost:4316/v1/traces',
               },
               {
                 name: 'OTEL_TRACES_SAMPLER',
-                value: 'parentbased_traceidratio',
+                value: 'xray',
               },
               {
                 name: 'OTEL_TRACES_SAMPLER_ARG',
-                value: '0.25',
+                value: 'endpoint=http://localhost:2000',
+              },
+              {
+                name: 'NODE_OPTIONS',
+                value: '--require /otel-auto-instrumentation-node/autoinstrumentation.js',
+              },
+            ],
+            mountPoints: [
+              {
+                sourceVolume: 'opentelemetry-auto-instrumentation-node',
+                containerPath: '/otel-auto-instrumentation-node',
+                readOnly: false,
               },
             ],
           },
           {
-            name: 'aws-otel-collector',
-            image: 'amazon/aws-otel-collector',
+            name: 'ecs-cwagent',
+            image: 'public.ecr.aws/cloudwatch-agent/cloudwatch-agent:latest',
             essential: true,
+            secrets: [
+              {
+                name: 'CW_CONFIG_CONTENT',
+                valueFrom: cwAgentConfigName,
+              },
+            ],
             logConfiguration: {
               logDriver: 'awslogs',
               options: {
-                'awslogs-group': '/ecs/awsfundamentals/aws-otel-collector',
+                'awslogs-group': cwAgentLogGroupName,
                 'awslogs-region': 'us-east-1',
                 'awslogs-stream-prefix': 'ecs',
               },
             },
-            healthCheck: {
-              command: ['/healthcheck'],
-              interval: 5,
-              timeout: 6,
-              retries: 5,
-              startPeriod: 1,
-            },
-            environment: [
-              { name: 'AWS_REGION', value: 'us-east-1' },
-              { name: 'AOT_CONFIG_CONTENT', valueFrom: `ssm:${otelConfigName}` },
+          },
+          {
+            name: 'init',
+            image: 'public.ecr.aws/aws-observability/adot-autoinstrumentation-node:v0.7.0',
+            essential: false,
+            command: ['cp', '-a', '/autoinstrumentation/.', '/otel-auto-instrumentation-node'],
+            mountPoints: [
+              {
+                sourceVolume: 'opentelemetry-auto-instrumentation-node',
+                containerPath: '/otel-auto-instrumentation-node',
+                readOnly: false,
+              },
             ],
           },
         ]),
@@ -429,9 +481,17 @@ export default $config({
   async run() {
     const { repositoryUrl } = createRepository();
 
+    const { backendLogGroup, cwAgentLogGroup } = createLogGroups();
+
     const { executionRole, taskRole } = createRoles();
 
-    const taskDefinition = createTaskDefinition({ repositoryUrl, taskRole, executionRole });
+    const taskDefinition = createTaskDefinition({ 
+      repositoryUrl, 
+      taskRole, 
+      executionRole, 
+      backendLogGroup, 
+      cwAgentLogGroup 
+    });
 
     const { subnets, securityGroup, targetGroup, loadBalancer } = createNetworking();
 
