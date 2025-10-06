@@ -182,13 +182,29 @@ const createRoles = () => {
  * Create a Lambda function with Function URL enabled.
  */
 const createLambdaFunction = () => {
+  const name = `${$app.name}-${$app.stage}-awsfundamentals-hello-lambda`;
   const lambdaFunction = new sst.aws.Function('lambdaFunction', {
-    name: 'awsfundamentals-hello-lambda',
+    name,
     runtime: aws.lambda.Runtime.NodeJS20dX,
     handler: 'lambda/handler.handler',
-    role: createLambdaRole().arn,
+    role: createLambdaRole(name).arn,
     timeout: '30 seconds',
     url: true,
+    architecture: 'x86_64',
+    // nodejs: {
+    //   format: 'cjs',
+    //   esbuild: {
+    //     external: ['@opentelemetry/api'],
+    //   },
+    // },
+    environment: {
+      AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
+      OTEL_NODE_ENABLED_INSTRUMENTATIONS: 'aws-sdk,aws-lambda,http',
+    },
+    layers: [
+      // https://aws-otel.github.io/docs/getting-started/lambda/lambda-js
+      'arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-nodejs-amd64-ver-1-30-2:1',
+    ],
     transform: {
       function: {
         tracingConfig: {
@@ -204,7 +220,7 @@ const createLambdaFunction = () => {
 /**
  * Create IAM role for Lambda function.
  */
-const createLambdaRole = () => {
+const createLambdaRole = (name: string) => {
   const lambdaRole = new aws.iam.Role('lambdaExecutionRole', {
     assumeRolePolicy: JSON.stringify({
       Version: '2012-10-17',
@@ -225,9 +241,41 @@ const createLambdaRole = () => {
     role: lambdaRole,
   });
 
+  // Create a log group for the Lambda function
+  const logGroup = new aws.cloudwatch.LogGroup('lambdaLogGroup', {
+    name: `/aws/lambda/${name}`,
+    retentionInDays: 7,
+  });
+
+  // Add a policy to allow the Lambda function to write to the log group
+  const lambdaLogGroupPolicy = new aws.iam.Policy('lambdaLogGroupPolicy', {
+    policy: logGroup.arn.apply((arn) =>
+      JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Effect: 'Allow',
+            Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+            Resource: arn,
+          },
+        ],
+      })
+    ),
+  });
+  new aws.iam.RolePolicyAttachment('lambdaLogGroupPolicyAttachment', {
+    policyArn: lambdaLogGroupPolicy.arn,
+    role: lambdaRole,
+  });
+
   // Add X-Ray tracing permissions
   new aws.iam.RolePolicyAttachment('lambdaXRayRoleAttachment', {
     policyArn: 'arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess',
+    role: lambdaRole,
+  });
+
+  // Add OpenTelemetry permissions
+  new aws.iam.RolePolicyAttachment('lambdaOpenTelemetryRoleAttachment', {
+    policyArn: 'arn:aws:iam::aws:policy/CloudWatchLambdaApplicationSignalsExecutionRolePolicy',
     role: lambdaRole,
   });
 
@@ -244,7 +292,7 @@ const createTaskDefinition = (params: {
   executionRole: aws.iam.Role;
   backendLogGroup: aws.cloudwatch.LogGroup;
   cwAgentLogGroup: aws.cloudwatch.LogGroup;
-  lambdaUrl: $util.Output<string>;
+  lambdaUrl: $util.Output<string> | string;
 }) => {
   const cwAgentConfig = createCwAgentConfigSsm();
   const { repositoryUrl, taskRole, executionRole, backendLogGroup, cwAgentLogGroup, lambdaUrl } = params;
@@ -520,10 +568,10 @@ const createClusterAndService = (params: {
   targetGroup: aws.lb.TargetGroup;
 }) => {
   const { taskDefinition, securityGroup, subnets, targetGroup } = params;
-  const cluster = new aws.ecs.Cluster('cluster', { name: 'awsfundamentals' });
+  const { arn: cluster } = new aws.ecs.Cluster('cluster', { name: 'awsfundamentals' });
   new aws.ecs.Service('service', {
     name: 'awsfundamentals',
-    cluster: cluster.arn,
+    cluster,
     desiredCount: 1,
     launchType: 'FARGATE',
     taskDefinition: taskDefinition.arn,
@@ -553,7 +601,6 @@ export default $config({
         aws: {
           version: '7.7.0',
           region: 'us-east-1',
-          profile: 'awsfun-handson',
         },
       },
     };
