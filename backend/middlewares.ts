@@ -1,7 +1,14 @@
-import { Request, Response, NextFunction } from 'express';
+import * as opentelemetry from '@opentelemetry/api';
+import { NextFunction, Request, Response } from 'express';
 import { logger } from './logger';
 
+const tracer = opentelemetry.trace.getTracer('awsfundamentals-container');
+
 export const requestLoggingMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  const exampleSpan = tracer.startSpan('ecs-span');
+
+  console.log(JSON.stringify(req, null, 2));
+
   const start = Date.now();
 
   logger.info('Incoming request', {
@@ -19,6 +26,7 @@ export const requestLoggingMiddleware = (req: Request, res: Response, next: Next
       statusCode: res.statusCode,
       duration: `${duration}ms`,
     });
+    exampleSpan.end();
     return originalEnd(chunk, encoding as BufferEncoding, cb);
   };
 

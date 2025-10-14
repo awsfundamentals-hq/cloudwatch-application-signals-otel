@@ -1,10 +1,10 @@
 import * as opentelemetry from '@opentelemetry/api';
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 
-const tracer = opentelemetry.trace.getTracer(process.env.AWS_LAMBDA_FUNCTION_NAME as string);
+const tracer = opentelemetry.trace.getTracer('awsfundamentals-lambda');
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  const exampleSpan = tracer.startSpan('exampleSpan');
+  const exampleSpan = tracer.startSpan('lambda-span');
 
   console.log(JSON.stringify(event, null, 2));
 

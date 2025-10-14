@@ -191,15 +191,10 @@ const createLambdaFunction = () => {
     timeout: '30 seconds',
     url: true,
     architecture: 'x86_64',
-    // nodejs: {
-    //   format: 'cjs',
-    //   esbuild: {
-    //     external: ['@opentelemetry/api'],
-    //   },
-    // },
     environment: {
       AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
       OTEL_NODE_ENABLED_INSTRUMENTATIONS: 'aws-sdk,aws-lambda,http',
+      OTEL_LOG_LEVEL: 'DEBUG',
     },
     layers: [
       // https://aws-otel.github.io/docs/getting-started/lambda/lambda-js
