@@ -8,7 +8,7 @@
     "lint": "next lint",
     "start": "next start",
     "sst:deploy:dev": "npx sst deploy --stage=dev",
-    "app:publish:dev": "chmod +x ./scripts/publish.sh && ./scripts/publish.sh --stage=dev",
+    "sst:remove:dev": "npx sst remove --stage=dev",
     "extract-urls:dev": "chmod +x ./scripts/extract-urls.sh && ./scripts/extract-urls.sh --stage=dev",
     "invoke:ecs:dev": "chmod +x ./scripts/invoke.sh && ./scripts/invoke.sh --stage=dev --type=ecs",
     "invoke:lambda:dev": "chmod +x ./scripts/invoke.sh && ./scripts/invoke.sh --stage=dev --type=lambda"

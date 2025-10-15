@@ -5,10 +5,21 @@
 
 declare module "sst" {
   export interface Resource {
+    "api": {
+      "type": "sst.aws.ApiGatewayV2"
+      "url": string
+    }
     "lambdaFunction": {
       "name": string
       "type": "sst.aws.Function"
       "url": string
+    }
+    "service": {
+      "service": string
+      "type": "sst.aws.Service"
+    }
+    "vpc": {
+      "type": "sst.aws.Vpc"
     }
   }
 }

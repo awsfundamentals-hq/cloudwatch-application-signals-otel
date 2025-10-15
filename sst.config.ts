@@ -2,8 +2,9 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
 const createCwAgentConfigSsm = () => {
+  const name = `${$app.name}-${$app.stage}`;
   return new aws.ssm.Parameter('cwAgentConfig', {
-    name: '/ecs/awsfundamentals/cw-agent-config',
+    name: `/ecs/${name}/cw-agent-config`,
     type: 'String',
     value: `
 {
@@ -23,67 +24,23 @@ const createCwAgentConfigSsm = () => {
 };
 
 /**
- * Create the ECR repository.
- * We expire untagged images so we don't pay for them.
- */
-const createRepository = () => {
-  const name = `${$app.name}-${$app.stage}-ecr`;
-  const repository = new aws.ecr.Repository('backend', { name, forceDelete: true });
-
-  new aws.ecr.LifecyclePolicy('backendLifecyclePolicy', {
-    repository: repository.name,
-    policy: JSON.stringify({
-      rules: [
-        {
-          rulePriority: 1,
-          description: 'Delete untagged images',
-          selection: {
-            tagStatus: 'untagged',
-            countType: 'imageCountMoreThan',
-            countNumber: 1,
-          },
-          action: {
-            type: 'expire',
-          },
-        },
-      ],
-    }),
-  }, {
-    dependsOn: [repository],
-  });
-
-  return repository;
-};
-
-/**
- * Create the CloudWatch log groups for ECS tasks.
- *
- * • Backend log group: For the main application container logs
- * • CW-Agent log group: For the CloudWatch agent container logs
- */
-const createLogGroups = () => {
-  const name = `${$app.name}-${$app.stage}`;
-  const backendLogGroup = new aws.cloudwatch.LogGroup('logGroupBackend', {
-    name: `/ecs/${name}/ecs`,
-    retentionInDays: 7,
-  });
-
-  const cwAgentLogGroup = new aws.cloudwatch.LogGroup('logGroupCwAgent', {
-    name: `/ecs/${name}/cw-agent`,
-    retentionInDays: 7,
-  });
-
-  return { backendLogGroup, cwAgentLogGroup };
-};
-
-/**
  * Create the necessary roles for ECS: execution role and task role.
  *
  * • ECS Task Execution Role: Allows ECS to manage the task execution.
  * • ECS Task Role: Allows the task to interact with other AWS services.
  */
 const createRoles = () => {
+  const managedPolicies = {
+    taskRole: [
+      'CloudWatchFullAccess',
+      'AWSXRayDaemonWriteAccess',
+      'CloudWatchAgentServerPolicy',
+      'AmazonElasticFileSystemClientReadWriteAccess',
+    ],
+    executionRole: ['service-role/AmazonECSTaskExecutionRolePolicy', 'AmazonSSMFullAccess', 'AmazonElasticFileSystemClientReadWriteAccess'],
+  };
   const executionRole = new aws.iam.Role('executionRole', {
+    name: `${$app.name}-${$app.stage}-exec`,
     assumeRolePolicy: JSON.stringify({
       Version: '2012-10-17',
       Statement: [
@@ -97,7 +54,15 @@ const createRoles = () => {
       ],
     }),
   });
+  for (const [index, policyArn] of managedPolicies.executionRole.entries()) {
+    new aws.iam.RolePolicyAttachment(`executionRoleAttachment${index}`, {
+      policyArn: $interpolate`arn:aws:iam::aws:policy/${policyArn}`,
+      role: executionRole,
+    });
+  }
+
   const taskRole = new aws.iam.Role('taskRole', {
+    name: `${$app.name}-${$app.stage}-task`,
     assumeRolePolicy: JSON.stringify({
       Version: '2012-10-17',
       Statement: [
@@ -111,56 +76,14 @@ const createRoles = () => {
       ],
     }),
   });
-  new aws.iam.RolePolicyAttachment('executionRoleAttachment', {
-    policyArn: 'arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy',
-    role: executionRole,
-  });
-  const logPolicy = new aws.iam.Policy('logPolicy', {
-    policy: JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Effect: 'Allow',
-          Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
-          Resource: 'arn:aws:logs:*:*:*',
-        },
-      ],
-    }),
-  });
-  const xrayPolicy = new aws.iam.Policy('xrayPolicy', {
-    policy: JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [
-        { Effect: 'Allow', Action: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords', 'xray:PutServiceMetrics'], Resource: '*' },
-      ],
-    }),
-  });
-  const readFromSsmPolicy = new aws.iam.Policy('readFromSsmPolicy', {
-    policy: JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [
-        { Effect: 'Allow', Action: ['ssm:GetParameter'], Resource: '*' },
-        { Effect: 'Allow', Action: ['ssm:GetParameters'], Resource: '*' },
-      ],
-    }),
-  });
-  new aws.iam.RolePolicyAttachment('taskRoleAttachmentXray', {
-    policyArn: xrayPolicy.arn,
-    role: taskRole,
-  });
-  new aws.iam.RolePolicyAttachment('taskRoleAttachmentReadFromSsm', {
-    policyArn: readFromSsmPolicy.arn,
-    role: executionRole,
-  });
-  new aws.iam.RolePolicyAttachment('taskRoleAttachment', {
-    policyArn: logPolicy.arn,
-    role: taskRole,
-  });
-  new aws.iam.RolePolicyAttachment('taskRoleAttachmentCloudWatchAgent', {
-    policyArn: 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy',
-    role: taskRole,
-  });
-  return { executionRole, taskRole };
+  for (const [index, policyArn] of managedPolicies.taskRole.entries()) {
+    new aws.iam.RolePolicyAttachment(`taskRoleAttachment${index}`, {
+      policyArn: $interpolate`arn:aws:iam::aws:policy/${policyArn}`,
+      role: taskRole,
+    });
+  }
+
+  return { executionRole: executionRole.name, taskRole: taskRole.name };
 };
 
 /**
@@ -173,7 +96,10 @@ const createLambdaFunction = () => {
     name,
     runtime: aws.lambda.Runtime.NodeJS20dX,
     handler: 'lambda/handler.handler',
-    role: createLambdaRole(name).arn,
+    policies: [
+      'arn:aws:iam::aws:policy/CloudWatchLambdaApplicationSignalsExecutionRolePolicy',
+      'arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess',
+    ],
     timeout: '30 seconds',
     url: true,
     architecture: 'x86_64',
@@ -199,387 +125,95 @@ const createLambdaFunction = () => {
 };
 
 /**
- * Create IAM role for Lambda function.
- */
-const createLambdaRole = (name: string) => {
-  const lambdaRole = new aws.iam.Role('lambdaExecutionRole', {
-    assumeRolePolicy: JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Effect: 'Allow',
-          Principal: {
-            Service: 'lambda.amazonaws.com',
-          },
-          Action: 'sts:AssumeRole',
-        },
-      ],
-    }),
-  });
-
-  new aws.iam.RolePolicyAttachment('lambdaExecutionRoleAttachment', {
-    policyArn: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
-    role: lambdaRole,
-  });
-
-  // Create a log group for the Lambda function
-  const logGroup = new aws.cloudwatch.LogGroup('lambdaLogGroup', {
-    name: `/aws/lambda/${name}`,
-    retentionInDays: 7,
-  });
-
-  // Add a policy to allow the Lambda function to write to the log group
-  const lambdaLogGroupPolicy = new aws.iam.Policy('lambdaLogGroupPolicy', {
-    policy: logGroup.arn.apply((arn) =>
-      JSON.stringify({
-        Version: '2012-10-17',
-        Statement: [
-          {
-            Effect: 'Allow',
-            Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
-            Resource: arn,
-          },
-        ],
-      })
-    ),
-  });
-  new aws.iam.RolePolicyAttachment('lambdaLogGroupPolicyAttachment', {
-    policyArn: lambdaLogGroupPolicy.arn,
-    role: lambdaRole,
-  });
-
-  // Add X-Ray tracing permissions
-  new aws.iam.RolePolicyAttachment('lambdaXRayRoleAttachment', {
-    policyArn: 'arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess',
-    role: lambdaRole,
-  });
-
-  // Add OpenTelemetry permissions
-  new aws.iam.RolePolicyAttachment('lambdaOpenTelemetryRoleAttachment', {
-    policyArn: 'arn:aws:iam::aws:policy/CloudWatchLambdaApplicationSignalsExecutionRolePolicy',
-    role: lambdaRole,
-  });
-
-  return lambdaRole;
-};
-
-/**
- * Create the ECS task definition.
- * This is the configuration for the ECS task that will run the Docker container.
- */
-const createTaskDefinition = (params: {
-  repositoryUrl: $util.Output<string>;
-  taskRole: aws.iam.Role;
-  executionRole: aws.iam.Role;
-  backendLogGroup: aws.cloudwatch.LogGroup;
-  cwAgentLogGroup: aws.cloudwatch.LogGroup;
-  lambdaUrl: $util.Output<string> | string;
-}) => {
-  const cwAgentConfig = createCwAgentConfigSsm();
-  const name = `${$app.name}-${$app.stage}-ecs`;
-  const { repositoryUrl, taskRole, executionRole, backendLogGroup, cwAgentLogGroup, lambdaUrl } = params;
-  return $util.all([repositoryUrl, cwAgentConfig.name, backendLogGroup.name, cwAgentLogGroup.name, lambdaUrl]).apply(
-    ([url, cwAgentConfigName, backendLogGroupName, cwAgentLogGroupName, lambdaFunctionUrl]) =>
-      new aws.ecs.TaskDefinition('taskdefinition', {
-        requiresCompatibilities: ['FARGATE'],
-        family: name,
-        cpu: '256',
-        memory: '512',
-        networkMode: 'awsvpc',
-        executionRoleArn: executionRole.arn,
-        taskRoleArn: taskRole.arn,
-        volumes: [{ name: 'opentelemetry-auto-instrumentation-node' }],
-        containerDefinitions: JSON.stringify([
-          {
-            name: 'backend',
-            essential: true,
-            image: `${url}:latest`,
-            portMappings: [
-              {
-                containerPort: 80,
-                hostPort: 80,
-                protocol: 'tcp',
-                appProtocol: 'http',
-              },
-            ],
-            logConfiguration: {
-              logDriver: 'awslogs',
-              options: {
-                'awslogs-group': backendLogGroupName,
-                'awslogs-region': 'us-east-1',
-                'awslogs-stream-prefix': 'ecs',
-              },
-            },
-            healthCheck: {
-              command: ['CMD-SHELL', 'curl -f http://localhost/ || exit 1'],
-              interval: 30,
-              timeout: 5,
-              retries: 3,
-              startPeriod: 0,
-            },
-            dependsOn: [
-              {
-                containerName: 'init',
-                condition: 'SUCCESS',
-              },
-            ],
-            environment: [
-              {
-                name: 'STAGE',
-                value: $app.stage,
-              },
-              {
-                name: 'ECS_CONTAINER_METADATA_URI',
-                value: 'http://169.254.170.2/v4',
-              },
-              {
-                name: 'ECS_ENABLE_CONTAINER_METADATA',
-                value: 'true',
-              },
-              {
-                name: 'OTEL_RESOURCE_ATTRIBUTES',
-                value: `aws.log.group.names=${backendLogGroupName},service.name=${name}`,
-              },
-              {
-                name: 'OTEL_LOGS_EXPORTER',
-                value: 'none',
-              },
-              {
-                name: 'OTEL_METRICS_EXPORTER',
-                value: 'none',
-              },
-              {
-                name: 'OTEL_EXPORTER_OTLP_PROTOCOL',
-                value: 'http/protobuf',
-              },
-              {
-                name: 'OTEL_AWS_APPLICATION_SIGNALS_ENABLED',
-                value: 'true',
-              },
-              {
-                name: 'OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT',
-                value: 'http://localhost:4316/v1/metrics',
-              },
-              {
-                name: 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
-                value: 'http://localhost:4316/v1/traces',
-              },
-              {
-                name: 'OTEL_TRACES_SAMPLER',
-                value: 'xray',
-              },
-              {
-                name: 'OTEL_TRACES_SAMPLER_ARG',
-                value: 'endpoint=http://localhost:2000',
-              },
-              {
-                name: 'NODE_OPTIONS',
-                value: '--require /otel-auto-instrumentation-node/autoinstrumentation.js',
-              },
-              {
-                name: 'LAMBDA_FUNCTION_URL',
-                value: lambdaFunctionUrl,
-              },
-              {
-                name: 'SERVICE_NAME',
-                value: name,
-              },
-            ],
-            mountPoints: [
-              {
-                sourceVolume: 'opentelemetry-auto-instrumentation-node',
-                containerPath: '/otel-auto-instrumentation-node',
-                readOnly: false,
-              },
-            ],
-          },
-          {
-            name: 'ecs-cwagent',
-            image: 'public.ecr.aws/cloudwatch-agent/cloudwatch-agent:latest',
-            essential: true,
-            secrets: [
-              {
-                name: 'CW_CONFIG_CONTENT',
-                valueFrom: cwAgentConfigName,
-              },
-            ],
-            logConfiguration: {
-              logDriver: 'awslogs',
-              options: {
-                'awslogs-group': cwAgentLogGroupName,
-                'awslogs-region': 'us-east-1',
-                'awslogs-stream-prefix': 'ecs',
-              },
-            },
-          },
-          {
-            name: 'init',
-            image: 'public.ecr.aws/aws-observability/adot-autoinstrumentation-node:v0.7.0',
-            essential: false,
-            command: ['cp', '-a', '/autoinstrumentation/.', '/otel-auto-instrumentation-node'],
-            mountPoints: [
-              {
-                sourceVolume: 'opentelemetry-auto-instrumentation-node',
-                containerPath: '/otel-auto-instrumentation-node',
-                readOnly: false,
-              },
-            ],
-          },
-        ]),
-      })
-  );
-};
-
-/**
- * Create the networking resources: VPC, subnets, security group, load balancer, and target group.
- */
-const createNetworking = () => {
-  const name = `${$app.name}-${$app.stage}`;
-  const vpc = new aws.ec2.Vpc('vpc', {
-    cidrBlock: '172.16.0.0/16',
-    tags: { Name: name },
-  });
-  const subnet1 = new aws.ec2.Subnet('subnet', {
-    vpcId: vpc.id,
-    cidrBlock: '172.16.1.0/24',
-    availabilityZone: 'us-east-1a',
-    tags: {
-      Name: `${name}-us-east-1a`,
-    },
-  });
-  const subnet2 = new aws.ec2.Subnet('subnet2', {
-    vpcId: vpc.id,
-    cidrBlock: '172.16.2.0/24',
-    availabilityZone: 'us-east-1b',
-    tags: {
-      Name: `${name}-us-east-1b`,
-    },
-  });
-  const internetGateway = new aws.ec2.InternetGateway('internetGateway', {
-    vpcId: vpc.id,
-  });
-  const routeTable = new aws.ec2.RouteTable('routeTable', {
-    vpcId: vpc.id,
-    routes: [
-      {
-        cidrBlock: '0.0.0.0/0',
-        gatewayId: internetGateway.id,
-      },
-    ],
-  });
-  new aws.ec2.RouteTableAssociation('subnet1RouteTableAssociation', {
-    subnetId: subnet1.id,
-    routeTableId: routeTable.id,
-  });
-  new aws.ec2.RouteTableAssociation('subnet2RouteTableAssociation', {
-    subnetId: subnet2.id,
-    routeTableId: routeTable.id,
-  });
-  const securityGroup = new aws.ec2.SecurityGroup('securityGroup', {
-    vpcId: vpc.id,
-    ingress: [
-      {
-        fromPort: 80,
-        toPort: 80,
-        protocol: 'tcp',
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-      {
-        fromPort: 4317,
-        toPort: 4317,
-        protocol: 'tcp',
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-    ],
-    egress: [
-      {
-        fromPort: 443,
-        toPort: 443,
-        protocol: 'tcp',
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-      {
-        fromPort: 80,
-        toPort: 80,
-        protocol: 'tcp',
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-      {
-        fromPort: 4317,
-        toPort: 4317,
-        protocol: 'tcp',
-        cidrBlocks: ['0.0.0.0/0'],
-      },
-    ],
-    tags: {
-      Name: name,
-    },
-  });
-  const loadBalancer = new aws.lb.LoadBalancer('loadBalancer', {
-    name,
-    internal: false,
-    securityGroups: [securityGroup.id],
-    subnets: [subnet1.id, subnet2.id],
-  });
-  const targetGroup = new aws.lb.TargetGroup('targetGroup', {
-    name: `${name}-target-group`,
-    port: 80,
-    protocol: 'HTTP',
-    targetType: 'ip',
-    vpcId: vpc.id,
-    healthCheck: {
-      path: '/',
-      protocol: 'HTTP',
-    },
-  });
-  new aws.lb.Listener('listener', {
-    loadBalancerArn: loadBalancer.arn,
-    port: 80,
-    protocol: 'HTTP',
-    defaultActions: [
-      {
-        type: 'forward',
-        targetGroupArn: targetGroup.arn,
-      },
-    ],
-    tags: {
-      Name: `${name}-listener`,
-    },
-  });
-  return { vpc, subnets: [subnet1, subnet2], securityGroup, targetGroup, loadBalancer };
-};
-/**
  * Create the ECS cluster and service.
  * This is the ECS service that will run the ECS task.
  */
-const createClusterAndService = (params: {
-  taskDefinition: $util.Output<aws.ecs.TaskDefinition>;
-  securityGroup: aws.ec2.SecurityGroup;
-  subnets: aws.ec2.Subnet[];
-  targetGroup: aws.lb.TargetGroup;
-}) => {
-  const { taskDefinition, securityGroup, subnets, targetGroup } = params;
-  const name = `${$app.name}-${$app.stage}-ecs`;
-  const { arn: cluster } = new aws.ecs.Cluster('cluster', { name });
-  new aws.ecs.Service('service', {
-    name,
+const createEcsService = (lambda: sst.aws.Function) => {
+  const { taskRole, executionRole } = createRoles();
+  const cwAgentConfig = createCwAgentConfigSsm();
+  const name = `${$app.name}-${$app.stage}`;
+
+  const otelInstrumentationPath = '/otel-auto-instrumentation-node';
+  const vpc = new sst.aws.Vpc('vpc');
+  const efs = new sst.aws.Efs('efs', { vpc });
+  const cluster = new sst.aws.Cluster('cluster', { vpc, transform: { cluster: { name } } });
+  const service = new sst.aws.Service('service', {
+    transform: { service: { name } },
+    cpu: '0.25 vCPU',
+    memory: '0.5 GB',
+    scaling: { min: 1, max: 1 },
     cluster,
-    desiredCount: 1,
-    launchType: 'FARGATE',
-    taskDefinition: taskDefinition.arn,
-    networkConfiguration: {
-      assignPublicIp: true,
-      subnets: subnets.map((s) => s.id),
-      securityGroups: [securityGroup.id],
+    taskRole,
+    executionRole,
+    capacity: 'spot',
+    serviceRegistry: {
+      port: 80,
     },
-    loadBalancers: [
+    containers: [
       {
-        targetGroupArn: targetGroup.arn,
-        containerName: 'backend',
-        containerPort: 80,
+        name: 'init',
+        image: 'public.ecr.aws/aws-observability/adot-autoinstrumentation-node:v0.7.0',
+        command: ['cp', '-a', '/autoinstrumentation/.', otelInstrumentationPath],
+        volumes: [{ path: otelInstrumentationPath, efs }],
+        environment: {
+          STAGE: $app.stage,
+        },
+        logging: {
+          retention: '1 week',
+          name: `/ecs/${name}/init`,
+        },
+      },
+      {
+        name: 'ecs-cwagent',
+        image: 'public.ecr.aws/cloudwatch-agent/cloudwatch-agent:latest',
+        ssm: {
+          CW_CONFIG_CONTENT: cwAgentConfig.arn,
+        },
+        environment: {
+          STAGE: $app.stage,
+        },
+        logging: {
+          retention: '1 week',
+          name: `/ecs/${name}/cwagent`,
+        },
+      },
+      {
+        name: 'app',
+        image: {
+          context: './backend',
+          dockerfile: 'Dockerfile',
+        },
+        volumes: [{ path: otelInstrumentationPath, efs }],
+        environment: {
+          STAGE: $app.stage,
+          ECS_CONTAINER_METADATA_URI: 'http://169.254.170.2/v4',
+          ECS_ENABLE_CONTAINER_METADATA: 'true',
+          OTEL_RESOURCE_ATTRIBUTES: `aws.log.group.names=${name},service.name=${name}`,
+          OTEL_LOGS_EXPORTER: 'none',
+          OTEL_METRICS_EXPORTER: 'none',
+          OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+          OTEL_AWS_APPLICATION_SIGNALS_ENABLED: 'true',
+          OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT: 'http://localhost:4316/v1/metrics',
+          OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://localhost:4316/v1/traces',
+          OTEL_TRACES_SAMPLER: 'xray',
+          OTEL_TRACES_SAMPLER_ARG: 'endpoint=http://localhost:2000',
+          NODE_OPTIONS: `--require ${otelInstrumentationPath}/autoinstrumentation.js`,
+          LAMBDA_FUNCTION_URL: lambda.url,
+          SERVICE_NAME: name,
+        },
+        logging: {
+          retention: '1 week',
+          name: `/ecs/${name}/app`,
+        },
       },
     ],
   });
+  const api = new sst.aws.ApiGatewayV2('api', {
+    transform: { api: { name } },
+    vpc,
+  });
+  api.routePrivate('$default', service.nodes.cloudmapService.arn);
+  return { apiGateway: api };
 };
 
 export default $config({
@@ -598,28 +232,7 @@ export default $config({
     };
   },
   async run() {
-    const { repositoryUrl } = createRepository();
-
-    const { backendLogGroup, cwAgentLogGroup } = createLogGroups();
-
-    const { executionRole, taskRole } = createRoles();
-
     const { lambdaFunction } = createLambdaFunction();
-
-    const taskDefinition = createTaskDefinition({
-      repositoryUrl,
-      taskRole,
-      executionRole,
-      backendLogGroup,
-      cwAgentLogGroup,
-      lambdaUrl: lambdaFunction.url,
-    });
-
-    const { subnets, securityGroup, targetGroup, loadBalancer } = createNetworking();
-
-    createClusterAndService({ taskDefinition, securityGroup, subnets, targetGroup });
-
-    loadBalancer.dnsName.apply((dnsName) => console.info(`🪄 LoadBalancer Endpoint: http://${dnsName}`));
-    lambdaFunction.url.apply((url) => console.info(`🪄 Lambda Function URL: ${url}`));
+    createEcsService(lambdaFunction);
   },
 });
