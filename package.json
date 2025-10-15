@@ -7,8 +7,11 @@
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
-    "sst:deploy:dev": "pnpm run docker:build && npx sst deploy --stage=dev",
-    "docker:build": "chmod +x ./backend/build.sh && ./backend/build.sh"
+    "sst:deploy:dev": "npx sst deploy --stage=dev",
+    "app:publish:dev": "chmod +x ./scripts/publish.sh && ./scripts/publish.sh --stage=dev",
+    "extract-urls:dev": "chmod +x ./scripts/extract-urls.sh && ./scripts/extract-urls.sh --stage=dev",
+    "invoke:ecs:dev": "chmod +x ./scripts/invoke.sh && ./scripts/invoke.sh --stage=dev --type=ecs",
+    "invoke:lambda:dev": "chmod +x ./scripts/invoke.sh && ./scripts/invoke.sh --stage=dev --type=lambda"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

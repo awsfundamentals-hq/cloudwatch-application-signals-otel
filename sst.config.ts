@@ -23,30 +23,12 @@ const createCwAgentConfigSsm = () => {
 };
 
 /**
- * Create SNS Topic for SLO Notifications
- * This topic will receive alerts when the SLO is violated.
- */
-const createSnsTopicForSlo = () => {
-  const topic = new aws.sns.Topic('sloNotificationTopic', {
-    name: 'awsfundamentals-slo-notifications',
-    displayName: 'AWS Fundamentals SLO Notifications',
-  });
-
-  new aws.sns.TopicSubscription('sloEmailSubscription', {
-    topic: topic.arn,
-    protocol: 'email',
-    endpoint: 'schmidt.tobias@outlook.com',
-  });
-
-  return topic;
-};
-
-/**
  * Create the ECR repository.
  * We expire untagged images so we don't pay for them.
  */
 const createRepository = () => {
-  const repository = new aws.ecr.Repository('backend', { name: 'awsfundamentals' });
+  const name = `${$app.name}-${$app.stage}-ecr`;
+  const repository = new aws.ecr.Repository('backend', { name, forceDelete: true });
 
   new aws.ecr.LifecyclePolicy('backendLifecyclePolicy', {
     repository: repository.name,
@@ -66,6 +48,8 @@ const createRepository = () => {
         },
       ],
     }),
+  }, {
+    dependsOn: [repository],
   });
 
   return repository;
@@ -78,13 +62,14 @@ const createRepository = () => {
  * • CW-Agent log group: For the CloudWatch agent container logs
  */
 const createLogGroups = () => {
+  const name = `${$app.name}-${$app.stage}`;
   const backendLogGroup = new aws.cloudwatch.LogGroup('logGroupBackend', {
-    name: '/ecs/awsfundamentals/backend',
+    name: `/ecs/${name}/ecs`,
     retentionInDays: 7,
   });
 
   const cwAgentLogGroup = new aws.cloudwatch.LogGroup('logGroupCwAgent', {
-    name: '/ecs/awsfundamentals/cw-agent',
+    name: `/ecs/${name}/cw-agent`,
     retentionInDays: 7,
   });
 
@@ -182,7 +167,8 @@ const createRoles = () => {
  * Create a Lambda function with Function URL enabled.
  */
 const createLambdaFunction = () => {
-  const name = `${$app.name}-${$app.stage}-awsfundamentals-hello-lambda`;
+  const name = `${$app.name}-${$app.stage}-lambda`;
+
   const lambdaFunction = new sst.aws.Function('lambdaFunction', {
     name,
     runtime: aws.lambda.Runtime.NodeJS20dX,
@@ -290,12 +276,13 @@ const createTaskDefinition = (params: {
   lambdaUrl: $util.Output<string> | string;
 }) => {
   const cwAgentConfig = createCwAgentConfigSsm();
+  const name = `${$app.name}-${$app.stage}-ecs`;
   const { repositoryUrl, taskRole, executionRole, backendLogGroup, cwAgentLogGroup, lambdaUrl } = params;
   return $util.all([repositoryUrl, cwAgentConfig.name, backendLogGroup.name, cwAgentLogGroup.name, lambdaUrl]).apply(
     ([url, cwAgentConfigName, backendLogGroupName, cwAgentLogGroupName, lambdaFunctionUrl]) =>
       new aws.ecs.TaskDefinition('taskdefinition', {
         requiresCompatibilities: ['FARGATE'],
-        family: 'awsfundamentals',
+        family: name,
         cpu: '256',
         memory: '512',
         networkMode: 'awsvpc',
@@ -338,6 +325,10 @@ const createTaskDefinition = (params: {
             ],
             environment: [
               {
+                name: 'STAGE',
+                value: $app.stage,
+              },
+              {
                 name: 'ECS_CONTAINER_METADATA_URI',
                 value: 'http://169.254.170.2/v4',
               },
@@ -347,7 +338,7 @@ const createTaskDefinition = (params: {
               },
               {
                 name: 'OTEL_RESOURCE_ATTRIBUTES',
-                value: `aws.log.group.names=${backendLogGroupName},service.name=awsfundamentals`,
+                value: `aws.log.group.names=${backendLogGroupName},service.name=${name}`,
               },
               {
                 name: 'OTEL_LOGS_EXPORTER',
@@ -388,6 +379,10 @@ const createTaskDefinition = (params: {
               {
                 name: 'LAMBDA_FUNCTION_URL',
                 value: lambdaFunctionUrl,
+              },
+              {
+                name: 'SERVICE_NAME',
+                value: name,
               },
             ],
             mountPoints: [
@@ -439,16 +434,17 @@ const createTaskDefinition = (params: {
  * Create the networking resources: VPC, subnets, security group, load balancer, and target group.
  */
 const createNetworking = () => {
+  const name = `${$app.name}-${$app.stage}`;
   const vpc = new aws.ec2.Vpc('vpc', {
     cidrBlock: '172.16.0.0/16',
-    tags: { Name: 'awsfundamentals' },
+    tags: { Name: name },
   });
   const subnet1 = new aws.ec2.Subnet('subnet', {
     vpcId: vpc.id,
     cidrBlock: '172.16.1.0/24',
     availabilityZone: 'us-east-1a',
     tags: {
-      Name: 'awsfundamentals-us-east-1a',
+      Name: `${name}-us-east-1a`,
     },
   });
   const subnet2 = new aws.ec2.Subnet('subnet2', {
@@ -456,7 +452,7 @@ const createNetworking = () => {
     cidrBlock: '172.16.2.0/24',
     availabilityZone: 'us-east-1b',
     tags: {
-      Name: 'awsfundamentals-us-east-1b',
+      Name: `${name}-us-east-1b`,
     },
   });
   const internetGateway = new aws.ec2.InternetGateway('internetGateway', {
@@ -516,17 +512,17 @@ const createNetworking = () => {
       },
     ],
     tags: {
-      Name: 'awsfundamentals',
+      Name: name,
     },
   });
   const loadBalancer = new aws.lb.LoadBalancer('loadBalancer', {
-    name: 'awsfundamentals',
+    name,
     internal: false,
     securityGroups: [securityGroup.id],
     subnets: [subnet1.id, subnet2.id],
   });
   const targetGroup = new aws.lb.TargetGroup('targetGroup', {
-    name: 'awsfundamentals',
+    name: `${name}-target-group`,
     port: 80,
     protocol: 'HTTP',
     targetType: 'ip',
@@ -547,7 +543,7 @@ const createNetworking = () => {
       },
     ],
     tags: {
-      Name: 'awsfundamentals',
+      Name: `${name}-listener`,
     },
   });
   return { vpc, subnets: [subnet1, subnet2], securityGroup, targetGroup, loadBalancer };
@@ -563,9 +559,10 @@ const createClusterAndService = (params: {
   targetGroup: aws.lb.TargetGroup;
 }) => {
   const { taskDefinition, securityGroup, subnets, targetGroup } = params;
-  const { arn: cluster } = new aws.ecs.Cluster('cluster', { name: 'awsfundamentals' });
+  const name = `${$app.name}-${$app.stage}-ecs`;
+  const { arn: cluster } = new aws.ecs.Cluster('cluster', { name });
   new aws.ecs.Service('service', {
-    name: 'awsfundamentals',
+    name,
     cluster,
     desiredCount: 1,
     launchType: 'FARGATE',
@@ -621,9 +618,6 @@ export default $config({
     const { subnets, securityGroup, targetGroup, loadBalancer } = createNetworking();
 
     createClusterAndService({ taskDefinition, securityGroup, subnets, targetGroup });
-
-    // SLO can't be created via Pulumi yet as it's not supported yet
-    createSnsTopicForSlo();
 
     loadBalancer.dnsName.apply((dnsName) => console.info(`🪄 LoadBalancer Endpoint: http://${dnsName}`));
     lambdaFunction.url.apply((url) => console.info(`🪄 Lambda Function URL: ${url}`));
