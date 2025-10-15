@@ -31,13 +31,8 @@ const createCwAgentConfigSsm = () => {
  */
 const createRoles = () => {
   const managedPolicies = {
-    taskRole: [
-      'CloudWatchFullAccess',
-      'AWSXRayDaemonWriteAccess',
-      'CloudWatchAgentServerPolicy',
-      'AmazonElasticFileSystemClientReadWriteAccess',
-    ],
-    executionRole: ['service-role/AmazonECSTaskExecutionRolePolicy', 'AmazonSSMFullAccess', 'AmazonElasticFileSystemClientReadWriteAccess'],
+    taskRole: ['CloudWatchFullAccess', 'AWSXRayDaemonWriteAccess', 'CloudWatchAgentServerPolicy'],
+    executionRole: ['service-role/AmazonECSTaskExecutionRolePolicy', 'AmazonSSMFullAccess'],
   };
   const executionRole = new aws.iam.Role('executionRole', {
     name: `${$app.name}-${$app.stage}-exec`,
@@ -131,11 +126,9 @@ const createLambdaFunction = () => {
 const createEcsService = (lambda: sst.aws.Function) => {
   const { taskRole, executionRole } = createRoles();
   const cwAgentConfig = createCwAgentConfigSsm();
-  const name = `${$app.name}-${$app.stage}`;
+  const name = `${$app.name}-${$app.stage}-ecs`;
 
-  const otelInstrumentationPath = '/otel-auto-instrumentation-node';
   const vpc = new sst.aws.Vpc('vpc');
-  const efs = new sst.aws.Efs('efs', { vpc });
   const cluster = new sst.aws.Cluster('cluster', { vpc, transform: { cluster: { name } } });
   const service = new sst.aws.Service('service', {
     transform: { service: { name } },
@@ -151,19 +144,6 @@ const createEcsService = (lambda: sst.aws.Function) => {
     },
     containers: [
       {
-        name: 'init',
-        image: 'public.ecr.aws/aws-observability/adot-autoinstrumentation-node:v0.7.0',
-        command: ['cp', '-a', '/autoinstrumentation/.', otelInstrumentationPath],
-        volumes: [{ path: otelInstrumentationPath, efs }],
-        environment: {
-          STAGE: $app.stage,
-        },
-        logging: {
-          retention: '1 week',
-          name: `/ecs/${name}/init`,
-        },
-      },
-      {
         name: 'ecs-cwagent',
         image: 'public.ecr.aws/cloudwatch-agent/cloudwatch-agent:latest',
         ssm: {
@@ -176,6 +156,13 @@ const createEcsService = (lambda: sst.aws.Function) => {
           retention: '1 week',
           name: `/ecs/${name}/cwagent`,
         },
+        health: {
+          command: ['CMD', '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent', '--version'],
+          startPeriod: '30 seconds',
+          timeout: '5 seconds',
+          interval: '5 seconds',
+          retries: 10,
+        },
       },
       {
         name: 'app',
@@ -183,7 +170,13 @@ const createEcsService = (lambda: sst.aws.Function) => {
           context: './backend',
           dockerfile: 'Dockerfile',
         },
-        volumes: [{ path: otelInstrumentationPath, efs }],
+        health: {
+          command: ['CMD-SHELL', 'curl -f http://localhost:80/health || exit 1'],
+          startPeriod: '30 seconds',
+          timeout: '5 seconds',
+          interval: '5 seconds',
+          retries: 10,
+        },
         environment: {
           STAGE: $app.stage,
           ECS_CONTAINER_METADATA_URI: 'http://169.254.170.2/v4',
@@ -197,7 +190,7 @@ const createEcsService = (lambda: sst.aws.Function) => {
           OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://localhost:4316/v1/traces',
           OTEL_TRACES_SAMPLER: 'xray',
           OTEL_TRACES_SAMPLER_ARG: 'endpoint=http://localhost:2000',
-          NODE_OPTIONS: `--require ${otelInstrumentationPath}/autoinstrumentation.js`,
+          NODE_OPTIONS: `--require @aws/aws-distro-opentelemetry-node-autoinstrumentation/register`,
           LAMBDA_FUNCTION_URL: lambda.url,
           SERVICE_NAME: name,
         },

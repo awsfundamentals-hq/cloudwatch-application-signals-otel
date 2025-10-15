@@ -62,7 +62,7 @@ if [[ "$TYPE" == "lambda" ]]; then
   fi
   echo "⚡ Invoking Lambda Function: $url"
 elif [[ "$TYPE" == "ecs" ]]; then
-  url="$(jq -r '.loadBalancerUrl // empty' "$OUTPUT_FILE" 2>/dev/null)/lambda"
+  url="$(jq -r '.apiGatewayUrl // empty' "$OUTPUT_FILE" 2>/dev/null)/lambda"
   if [[ -z "$url" || "$url" == "null" ]]; then
     echo "❌ No Load Balancer URL found in $OUTPUT_FILE"
     exit 1
@@ -74,7 +74,12 @@ fi
 echo "🚀 Making HTTP request..."
 echo "---"
 
-if ! curl -f -s -o /dev/null -w "HTTP Status: %{http_code}\nResponse Time: %{time_total}s\nTotal Size: %{size_download} bytes\n" "$url"; then
+echo "📊 Response Headers:"
+echo "----------------"
+if ! curl -f -s -D - -o /dev/null "$url" | grep -v "^$" && \
+   echo "----------------" && \
+   echo -e "\n📈 Metrics:" && \
+   curl -f -s -o /dev/null -w "\nHTTP Status: %{http_code}\nResponse Time: %{time_total}s\nTotal Size: %{size_download} bytes\n" "$url"; then
   echo ""
   echo "❌ Request failed"
   exit 1

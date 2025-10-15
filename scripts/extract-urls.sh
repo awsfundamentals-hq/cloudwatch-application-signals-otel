@@ -32,23 +32,29 @@ if [[ -z "$STAGE" ]]; then
   exit 1
 fi
 
-# Function to get Load Balancer URL
-get_load_balancer_url() {
+# Function to get API Gateway URL
+get_api_gateway_url() {
   local stage=$1
-  local resource_prefix="${APP_NAME}-${stage}"
+  local api_name="${APP_NAME}-${stage}-ecs"
   
-  echo "🔍 Searching for Load Balancer in stage: $stage" >&2
+  echo "🔍 Searching for API Gateway in stage: $stage" >&2
   
-  local lb_dns
-  lb_dns=$(aws elbv2 describe-load-balancers \
-    --query "LoadBalancers[?starts_with(LoadBalancerName, '${resource_prefix}')].DNSName" \
+  # First, get the API ID
+  local api_id
+  api_id=$(aws apigatewayv2 get-apis \
+    --query "Items[?Name=='${api_name}'].ApiId" \
     --output text 2>/dev/null || echo "None")
-  
-  if [[ -n "$lb_dns" && "$lb_dns" != "None" && "$lb_dns" != "" ]]; then
-    echo "✅ Found Load Balancer: http://$lb_dns" >&2
-    echo "http://$lb_dns"
+    
+  if [[ -n "$api_id" && "$api_id" != "None" && "$api_id" != "" ]]; then
+    # Get the region from AWS CLI configuration
+    local region
+    region=$(aws configure get region)
+    local api_url="https://${api_id}.execute-api.${region}.amazonaws.com/${stage}"
+    
+    echo "✅ Found API Gateway: $api_url" >&2
+    echo "$api_url"
   else
-    echo "⚠️  No Load Balancer found for stage: $stage" >&2
+    echo "⚠️  No API Gateway found for stage: $stage" >&2
     return 1
   fi
 }
@@ -86,11 +92,11 @@ create_output_json() {
   
   # Create the JSON structure
   jq -n \
-    --arg lb_url "$lb_url" \
+    --arg api_url "$api_url" \
     --arg lambda_url "$lambda_url" \
     --arg timestamp "$timestamp" \
     '{
-      "loadBalancerUrl": (if $lb_url == "" then null else $lb_url end),
+      "apiGatewayUrl": (if $api_url == "" then null else $api_url end),
       "lambdaFunctionUrl": (if $lambda_url == "" then null else $lambda_url end),
       "extractedAt": $timestamp
     }' > "$temp_file" && mv "$temp_file" "$OUTPUT_FILE"
@@ -99,10 +105,10 @@ create_output_json() {
 # Main execution
 echo "🚀 Extracting infrastructure URLs for stage: $STAGE"
 
-# Extract Load Balancer URL
-lb_url=""
-if url=$(get_load_balancer_url "$STAGE"); then
-  lb_url="$url"
+# Extract API Gateway URL
+api_url=""
+if url=$(get_api_gateway_url "$STAGE"); then
+  api_url="$url"
 fi
 
 # Extract Lambda Function URL  
@@ -112,13 +118,13 @@ if url=$(get_lambda_function_url "$STAGE"); then
 fi
 
 # Create the output file
-create_output_json "$lb_url" "$lambda_url"
+create_output_json "$api_url" "$lambda_url"
 
 echo "✅ URLs extracted successfully!"
 echo "📁 Written to: $OUTPUT_FILE"
 
-if [[ -n "$lb_url" ]]; then
-  echo "🔗 Load Balancer URL: $lb_url"
+if [[ -n "$api_url" ]]; then
+  echo "🌐 API Gateway URL: $api_url"
 fi
 
 if [[ -n "$lambda_url" ]]; then
@@ -126,7 +132,7 @@ if [[ -n "$lambda_url" ]]; then
 fi
 
 # Show summary
-if [[ -z "$lb_url" && -z "$lambda_url" ]]; then
+if [[ -z "$api_url" && -z "$lambda_url" ]]; then
   echo "❌ No infrastructure URLs found for stage: $STAGE"
   exit 1
 fi

@@ -9,6 +9,7 @@
     "dev": "ts-node main.ts"
   },
   "dependencies": {
+    "@aws/aws-distro-opentelemetry-node-autoinstrumentation": "^0.7.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "winston": "^3.17.0"
