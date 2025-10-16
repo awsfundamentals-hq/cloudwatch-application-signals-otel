@@ -1,5 +1,5 @@
 import winston from 'winston';
-import { getFormattedStartupTime } from './ecs-metadata';
+import { getFormattedStartupTime } from './ecs-metadata/index';
 
 // Custom format to add container start time dynamically
 const addContainerStartTime = winston.format((info) => {

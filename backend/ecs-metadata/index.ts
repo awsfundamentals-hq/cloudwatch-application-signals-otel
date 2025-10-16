@@ -1,18 +1,12 @@
 import { DateTime } from 'luxon';
-import { logger } from './logger';
-
-interface ECSContainer {
-  Name: string;
-  StartedAt: string;
-  KnownStatus: string;
-}
-
-interface ECSTaskMetadata {
-  Containers: ECSContainer[];
-}
+import { logger } from '../logger';
+import { ECSTaskMetadata, ECSContainer, ContainerMetadata } from './types';
 
 // Global variable to store the app container's startup time
 export let containerStartTime: DateTime | null = null;
+
+// Global variable to store container metadata
+export let containerMetadata: ContainerMetadata | null = null;
 
 // Flag to track if metadata fetching is complete
 export let metadataFetched = false;
@@ -26,6 +20,13 @@ export async function fetchECSMetadata(): Promise<void> {
   if (!metadataUri) {
     logger.info('Not running in ECS environment, using current time as container start time');
     containerStartTime = DateTime.now();
+    containerMetadata = {
+      startTime: containerStartTime.toISO() || containerStartTime.toISODate() || 'unknown',
+      taskDefinitionVersion: 'local-dev',
+      containerName: 'app',
+      taskArn: 'local-development',
+      cluster: 'local',
+    };
     metadataFetched = true;
     return;
   }
@@ -71,9 +72,22 @@ export async function fetchECSMetadata(): Promise<void> {
         throw new Error(`Invalid StartedAt timestamp: ${appContainer.StartedAt}`);
       }
 
+      // Extract task definition version from container labels
+      const taskDefinitionVersion = appContainer.Labels['com.amazonaws.ecs.task-definition-version'];
+      
+      // Store container metadata
+      containerMetadata = {
+        startTime: appContainer.StartedAt,
+        taskDefinitionVersion,
+        containerName: appContainer.Name,
+        taskArn: data.TaskARN,
+        cluster: data.Cluster,
+      };
+
       logger.info('Successfully retrieved container startup time from ECS metadata', {
         startedAt: appContainer.StartedAt,
         formattedTime: containerStartTime.toFormat('yyyy-MM-dd HH:mm:ss'),
+        taskDefinitionVersion,
         retryCount,
       });
 
@@ -99,6 +113,13 @@ export async function fetchECSMetadata(): Promise<void> {
         
         // Use current time as fallback
         containerStartTime = DateTime.now();
+        containerMetadata = {
+          startTime: containerStartTime.toISO() || containerStartTime.toISODate() || 'unknown',
+          taskDefinitionVersion: 'unknown',
+          containerName: 'app',
+          taskArn: 'unknown',
+          cluster: 'unknown',
+        };
         metadataFetched = true;
         return;
       }
@@ -116,4 +137,14 @@ export function getFormattedStartupTime(): string | null {
 // Helper function to get relative startup time for headers
 export function getRelativeStartupTime(): string | null {
   return containerStartTime ? containerStartTime.toRelative() : null;
+}
+
+// Helper function to get task definition version
+export function getTaskDefinitionVersion(): string | null {
+  return containerMetadata ? containerMetadata.taskDefinitionVersion : null;
+}
+
+// Helper function to get all container metadata
+export function getContainerMetadata(): ContainerMetadata | null {
+  return containerMetadata;
 }

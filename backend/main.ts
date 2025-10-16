@@ -1,6 +1,6 @@
 import app from './app';
 import { logger } from './logger';
-import { fetchECSMetadata, getFormattedStartupTime } from './ecs-metadata';
+import { fetchECSMetadata, getFormattedStartupTime } from './ecs-metadata/index';
 
 const port = 80;
 

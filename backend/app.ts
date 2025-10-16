@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import { logger } from './logger';
 import { requestLoggingMiddleware, startupHeaderMiddleware, traceparentMiddleware } from './middlewares';
-import { metadataFetched, getFormattedStartupTime } from './ecs-metadata';
+import { metadataFetched, getFormattedStartupTime } from './ecs-metadata/index';
 
 const app: express.Application = express();
 

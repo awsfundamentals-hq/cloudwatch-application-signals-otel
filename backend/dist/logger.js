@@ -5,10 +5,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.logger = void 0;
 const winston_1 = __importDefault(require("winston"));
-const ecs_metadata_1 = require("./ecs-metadata");
+const index_1 = require("./ecs-metadata/index");
 // Custom format to add container start time dynamically
 const addContainerStartTime = winston_1.default.format((info) => {
-    const containerStart = (0, ecs_metadata_1.getFormattedStartupTime)();
+    const containerStart = (0, index_1.getFormattedStartupTime)();
     if (containerStart) {
         info.containerStart = containerStart;
     }

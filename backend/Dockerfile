@@ -10,6 +10,7 @@ COPY package*.json .
 RUN npm install
 # Copy TypeScript source files and tsconfig
 COPY *.ts tsconfig.json .
+COPY ecs-metadata/ ./ecs-metadata/
 # Build the TypeScript application
 RUN npm run build
 # Remove devDependencies to reduce image size

@@ -7,20 +7,21 @@ const cors_1 = __importDefault(require("cors"));
 const express_1 = __importDefault(require("express"));
 const logger_1 = require("./logger");
 const middlewares_1 = require("./middlewares");
-const ecs_metadata_1 = require("./ecs-metadata");
+const index_1 = require("./ecs-metadata/index");
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
+app.use(middlewares_1.traceparentMiddleware);
 app.use(middlewares_1.startupHeaderMiddleware);
 app.use(middlewares_1.requestLoggingMiddleware);
 app.get('/health', (_req, res) => {
-    if (!ecs_metadata_1.metadataFetched) {
+    if (!index_1.metadataFetched) {
         return res.status(503).json({
             status: 'Service Unavailable',
             message: 'ECS metadata is still being fetched',
             ready: false,
         });
     }
-    const containerStart = (0, ecs_metadata_1.getFormattedStartupTime)();
+    const containerStart = (0, index_1.getFormattedStartupTime)();
     res.status(200).json({
         status: 'OK',
         ready: true,

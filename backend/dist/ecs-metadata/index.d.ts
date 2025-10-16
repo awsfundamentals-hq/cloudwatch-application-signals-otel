@@ -1,0 +1,10 @@
+import { DateTime } from 'luxon';
+import { ContainerMetadata } from './types';
+export declare let containerStartTime: DateTime | null;
+export declare let containerMetadata: ContainerMetadata | null;
+export declare let metadataFetched: boolean;
+export declare function fetchECSMetadata(): Promise<void>;
+export declare function getFormattedStartupTime(): string | null;
+export declare function getRelativeStartupTime(): string | null;
+export declare function getTaskDefinitionVersion(): string | null;
+export declare function getContainerMetadata(): ContainerMetadata | null;

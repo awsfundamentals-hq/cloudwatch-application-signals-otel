@@ -5,14 +5,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const app_1 = __importDefault(require("./app"));
 const logger_1 = require("./logger");
-const ecs_metadata_1 = require("./ecs-metadata");
+const index_1 = require("./ecs-metadata/index");
 const port = 80;
 async function startServer() {
     try {
         logger_1.logger.info('Starting server initialization...');
         // Fetch ECS metadata first
-        await (0, ecs_metadata_1.fetchECSMetadata)();
-        const containerStart = (0, ecs_metadata_1.getFormattedStartupTime)();
+        await (0, index_1.fetchECSMetadata)();
+        const containerStart = (0, index_1.getFormattedStartupTime)();
         logger_1.logger.info('ECS metadata fetching completed', { containerStart });
         // Start the Express server
         app_1.default.listen(port, () => {

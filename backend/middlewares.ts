@@ -1,7 +1,7 @@
 import * as opentelemetry from '@opentelemetry/api';
 import { NextFunction, Request, Response } from 'express';
 import { logger } from './logger';
-import { getRelativeStartupTime } from './ecs-metadata';
+import { getRelativeStartupTime, getTaskDefinitionVersion } from './ecs-metadata/index';
 import { randomBytes } from 'crypto';
 
 const tracer = opentelemetry.trace.getTracer(process.env.SERVICE_NAME!);
@@ -34,6 +34,12 @@ export const startupHeaderMiddleware = (req: Request, res: Response, next: NextF
   if (relativeStartupTime) {
     res.set('x-startup', relativeStartupTime);
   }
+  
+  const taskDefinitionVersion = getTaskDefinitionVersion();
+  if (taskDefinitionVersion) {
+    res.set('x-task-definition', taskDefinitionVersion);
+  }
+  
   next();
 };
 
