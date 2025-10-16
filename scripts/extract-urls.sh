@@ -49,7 +49,7 @@ get_api_gateway_url() {
     # Get the region from AWS CLI configuration
     local region
     region=$(aws configure get region)
-    local api_url="https://${api_id}.execute-api.${region}.amazonaws.com/${stage}"
+    local api_url="https://${api_id}.execute-api.${region}.amazonaws.com/"
     
     echo "✅ Found API Gateway: $api_url" >&2
     echo "$api_url"

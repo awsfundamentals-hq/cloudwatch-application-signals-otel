@@ -101,7 +101,7 @@ const createLambdaFunction = () => {
     environment: {
       AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
       OTEL_NODE_ENABLED_INSTRUMENTATIONS: 'aws-sdk,aws-lambda,http',
-      OTEL_LOG_LEVEL: 'DEBUG',
+      OTEL_LOG_LEVEL: 'WARN',
     },
     layers: [
       // https://aws-otel.github.io/docs/getting-started/lambda/lambda-js
@@ -160,7 +160,7 @@ const createEcsService = (lambda: sst.aws.Function) => {
           command: ['CMD', '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent', '--version'],
           startPeriod: '30 seconds',
           timeout: '5 seconds',
-          interval: '5 seconds',
+          interval: '1 minute',
           retries: 10,
         },
       },
@@ -174,7 +174,7 @@ const createEcsService = (lambda: sst.aws.Function) => {
           command: ['CMD-SHELL', 'curl -f http://localhost:80/health || exit 1'],
           startPeriod: '30 seconds',
           timeout: '5 seconds',
-          interval: '5 seconds',
+          interval: '1 minute',
           retries: 10,
         },
         environment: {
