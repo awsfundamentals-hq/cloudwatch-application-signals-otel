@@ -1,11 +1,15 @@
 import winston from 'winston';
-import { getFormattedStartupTime } from './ecs-metadata/index';
+import { getFormattedStartupTime, getTaskDefinitionVersion } from './ecs-metadata/index';
 
 // Custom format to add container start time dynamically
-const addContainerStartTime = winston.format((info) => {
+const addContainerMetadata = winston.format((info) => {
   const containerStart = getFormattedStartupTime();
+  const taskDefinitionVersion = getTaskDefinitionVersion();
   if (containerStart) {
     info.containerStart = containerStart;
+  }
+  if (taskDefinitionVersion) {
+    info.taskDefinition = taskDefinitionVersion;
   }
   return info;
 });
@@ -15,7 +19,7 @@ export const logger = winston.createLogger({
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.errors({ stack: true }),
-    addContainerStartTime(),
+    addContainerMetadata(),
     winston.format.json()
   ),
   defaultMeta: {

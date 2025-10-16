@@ -1,6 +1,12 @@
 // eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="./.sst/platform/config.d.ts" />
 
+const oTelSharedSettings: Record<string, string> = {
+  OTEL_LOG_LEVEL: 'WARN',
+  OTEL_PROPAGATORS: 'xray',
+  OTEL_TRACES_SAMPLER: 'always_on',
+};
+
 const createCwAgentConfigSsm = () => {
   const name = `${$app.name}-${$app.stage}`;
   return new aws.ssm.Parameter('cwAgentConfig', {
@@ -100,8 +106,8 @@ const createLambdaFunction = () => {
     architecture: 'x86_64',
     environment: {
       AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
-      OTEL_NODE_ENABLED_INSTRUMENTATIONS: 'aws-sdk,aws-lambda,http',
-      OTEL_LOG_LEVEL: 'WARN',
+      OTEL_SERVICE_NAME: name,
+      ...oTelSharedSettings,
     },
     layers: [
       // https://aws-otel.github.io/docs/getting-started/lambda/lambda-js
@@ -151,6 +157,8 @@ const createEcsService = (lambda: sst.aws.Function) => {
         },
         environment: {
           STAGE: $app.stage,
+          ECS_CONTAINER_STOP_TIMEOUT: '2',
+          ECS_IMAGE_PULL_BEHAVIOR: 'prefer-cached',
         },
         logging: {
           retention: '1 week',
@@ -188,11 +196,11 @@ const createEcsService = (lambda: sst.aws.Function) => {
           OTEL_AWS_APPLICATION_SIGNALS_ENABLED: 'true',
           OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT: 'http://localhost:4316/v1/metrics',
           OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://localhost:4316/v1/traces',
-          OTEL_TRACES_SAMPLER: 'xray',
           OTEL_TRACES_SAMPLER_ARG: 'endpoint=http://localhost:2000',
           NODE_OPTIONS: `--require @aws/aws-distro-opentelemetry-node-autoinstrumentation/register`,
           LAMBDA_FUNCTION_URL: lambda.url,
           SERVICE_NAME: name,
+          ...oTelSharedSettings,
         },
         logging: {
           retention: '1 week',
