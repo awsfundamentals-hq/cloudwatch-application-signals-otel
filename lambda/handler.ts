@@ -1,7 +1,7 @@
 import { trace } from '@opentelemetry/api';
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 
-const tracer = trace.getTracer(process.env.AWS_LAMBDA_FUNCTION_NAME!);
+const tracer = trace.getTracer(process.env.OTEL_SERVICE_NAME!);
 
 export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
   const exampleSpan = tracer.startSpan('lambda-span');

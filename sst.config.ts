@@ -4,7 +4,8 @@
 const oTelSharedSettings: Record<string, string> = {
   OTEL_LOG_LEVEL: 'WARN',
   OTEL_PROPAGATORS: 'xray',
-  OTEL_TRACES_SAMPLER: 'always_on',
+  OTEL_TRACES_SAMPLER: 'traceidratio',
+  OTEL_TRACES_SAMPLER_ARG: '1',
 };
 
 const createCwAgentConfigSsm = () => {
@@ -106,6 +107,7 @@ const createLambdaFunction = () => {
     architecture: 'x86_64',
     environment: {
       AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
+      LAMBDA_APPLICATION_SIGNALS_REMOTE_ENVIRONMENT: `${$app.name}-${$app.stage}`,
       OTEL_SERVICE_NAME: name,
       ...oTelSharedSettings,
     },
