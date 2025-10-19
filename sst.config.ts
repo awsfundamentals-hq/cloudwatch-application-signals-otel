@@ -4,8 +4,37 @@
 const oTelSharedSettings: Record<string, string> = {
   OTEL_LOG_LEVEL: 'WARN',
   OTEL_PROPAGATORS: 'xray',
+  OTEL_LOGS_EXPORTER: 'none',
+  OTEL_TRACES_EXPORTER: 'none',
+  OTEL_METRICS_EXPORTER: 'none',
   OTEL_TRACES_SAMPLER: 'traceidratio',
   OTEL_TRACES_SAMPLER_ARG: '1',
+};
+
+const getOtelResourceAttributes = (params: { name: string; type: 'ecs' | 'lambda' }) => {
+  const { name, type } = params;
+  let logGroupPrefix: string;
+  if (type === 'lambda') {
+    logGroupPrefix = `/aws/lambda`;
+  } else if (type === 'ecs') {
+    logGroupPrefix = `/ecs`;
+  } else {
+    throw new Error('Unknown type');
+  }
+  const attributes = {
+    Application: `${$app.name}-${$app.stage}`,
+    Owner: `awsfundamentals`,
+    'service.name': name,
+    'deployment.environment': $app.stage,
+    'aws.log.group.names': `${logGroupPrefix}/${name}`,
+    'aws.application_signals.metric_resource_keys': 'Application&Owner',
+    // experimental
+    'aws.local.environment': $app.stage,
+    'aws.local.service': name,
+  };
+  return Object.entries(attributes)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(',');
 };
 
 const createCwAgentConfigSsm = () => {
@@ -106,9 +135,10 @@ const createLambdaFunction = () => {
     url: true,
     architecture: 'x86_64',
     environment: {
-      AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
-      LAMBDA_APPLICATION_SIGNALS_REMOTE_ENVIRONMENT: `${$app.name}-${$app.stage}`,
       OTEL_SERVICE_NAME: name,
+      AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
+      LAMBDA_APPLICATION_SIGNALS_REMOTE_ENVIRONMENT: $app.stage,
+      OTEL_RESOURCE_ATTRIBUTES: getOtelResourceAttributes({ name, type: 'lambda' }),
       ...oTelSharedSettings,
     },
     layers: [
@@ -191,17 +221,14 @@ const createEcsService = (lambda: sst.aws.Function) => {
           STAGE: $app.stage,
           ECS_CONTAINER_METADATA_URI: 'http://169.254.170.2/v4',
           ECS_ENABLE_CONTAINER_METADATA: 'true',
-          OTEL_RESOURCE_ATTRIBUTES: `aws.log.group.names=${name},service.name=${name}`,
-          OTEL_LOGS_EXPORTER: 'none',
-          OTEL_METRICS_EXPORTER: 'none',
+          OTEL_RESOURCE_ATTRIBUTES: getOtelResourceAttributes({ name, type: 'ecs' }),
+          OTEL_SERVICE_NAME: name,
           OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
           OTEL_AWS_APPLICATION_SIGNALS_ENABLED: 'true',
           OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT: 'http://localhost:4316/v1/metrics',
           OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://localhost:4316/v1/traces',
-          OTEL_TRACES_SAMPLER_ARG: 'endpoint=http://localhost:2000',
-          NODE_OPTIONS: `--require @aws/aws-distro-opentelemetry-node-autoinstrumentation/register`,
+          NODE_OPTIONS: `--require '@aws/aws-distro-opentelemetry-node-autoinstrumentation/register'`,
           LAMBDA_FUNCTION_URL: lambda.url,
-          SERVICE_NAME: name,
           ...oTelSharedSettings,
         },
         logging: {
@@ -230,6 +257,12 @@ export default $config({
         aws: {
           version: '7.7.0',
           region: 'us-east-1',
+          defaultTags: {
+            tags: {
+              Application: `ecs-fargate-${input.stage}`,
+              Owner: 'awsfundamentals',
+            },
+          },
         },
       },
     };

@@ -1,13 +1,14 @@
 import cors from 'cors';
 import express from 'express';
+import { getFormattedStartupTime, metadataFetched } from './ecs-metadata/index';
 import { logger } from './logger';
-import { requestLoggingMiddleware, startupHeaderMiddleware, traceparentMiddleware } from './middlewares';
-import { metadataFetched, getFormattedStartupTime } from './ecs-metadata/index';
+import { requestLoggingMiddleware, startupHeaderMiddleware, traceparentMiddleware, suppressTracingMiddleware } from './middlewares';
+import { tracer } from './tracer';
 
 const app: express.Application = express();
 
+app.use(suppressTracingMiddleware);
 app.use(cors());
-
 app.use(traceparentMiddleware);
 app.use(startupHeaderMiddleware);
 app.use(requestLoggingMiddleware);
@@ -69,10 +70,13 @@ app.get('/lambda', async (_req, res) => {
 
     logger.info('Calling Lambda function', { lambdaFunctionUrl });
 
+    const lambdaSpan = tracer.startSpan('invokeLambda');
     const response = await fetch(lambdaFunctionUrl, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     });
+    lambdaSpan.setStatus({ code: response.status });
+    lambdaSpan.end();
 
     if (!response.ok) {
       throw new Error(`Lambda function returned ${response.status}: ${response.statusText}`);

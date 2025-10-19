@@ -23,7 +23,7 @@ export const logger = winston.createLogger({
     winston.format.json()
   ),
   defaultMeta: {
-    service: process.env.SERVICE_NAME!,
+    service: process.env.OTEL_SERVICE_NAME!,
     environment: process.env.STAGE!,
     region: process.env.AWS_REGION || 'local',
   },
