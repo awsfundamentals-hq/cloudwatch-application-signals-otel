@@ -10,7 +10,7 @@ To run this application, follow these steps:
 2. Clone this repository to your local machine.
 3. Install the dependencies by running `pnpm i` in the project root directory.
 4. Provision the infrastructure via `pnpm run sst:deploy:dev`.
-5. Invoke either ECS or Lambda via the provided NX commands, e.g. `INVOKE_PATH=/lambda npx nx run invoke:ecs:dev`
+5. Invoke either ECS or Lambda via the provided NX commands, e.g. `INVOKE_PATH=/lambda pnpm run invoke:ecs:dev`
 6. Open the CloudWatch console to explore your Application Map!
 
 ## Important: Cost Considerations
