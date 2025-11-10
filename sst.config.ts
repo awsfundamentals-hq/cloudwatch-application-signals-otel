@@ -22,6 +22,7 @@ const getOtelResourceAttributes = (params: { name: string; type: 'ecs' | 'lambda
     throw new Error('Unknown type');
   }
   const attributes = {
+    OTEL_SERVICE_NAME: `${$app.name}-${$app.stage}-${type}`,
     Application: `${$app.name}-${$app.stage}`,
     Owner: `awsfundamentals`,
     'service.name': name,
@@ -135,7 +136,6 @@ const createLambdaFunction = () => {
     url: true,
     architecture: 'x86_64',
     environment: {
-      OTEL_SERVICE_NAME: name,
       AWS_LAMBDA_EXEC_WRAPPER: '/opt/otel-handler',
       LAMBDA_APPLICATION_SIGNALS_REMOTE_ENVIRONMENT: $app.stage,
       OTEL_RESOURCE_ATTRIBUTES: getOtelResourceAttributes({ name, type: 'lambda' }),
@@ -222,12 +222,11 @@ const createEcsService = (lambda: sst.aws.Function) => {
           ECS_CONTAINER_METADATA_URI: 'http://169.254.170.2/v4',
           ECS_ENABLE_CONTAINER_METADATA: 'true',
           OTEL_RESOURCE_ATTRIBUTES: getOtelResourceAttributes({ name, type: 'ecs' }),
-          OTEL_SERVICE_NAME: name,
           OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
           OTEL_AWS_APPLICATION_SIGNALS_ENABLED: 'true',
           OTEL_AWS_APPLICATION_SIGNALS_EXPORTER_ENDPOINT: 'http://localhost:4316/v1/metrics',
           OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://localhost:4316/v1/traces',
-          NODE_OPTIONS: `--require '@aws/aws-distro-opentelemetry-node-autoinstrumentation/register'`,
+          NODE_OPTIONS: `--require @aws/aws-distro-opentelemetry-node-autoinstrumentation/register`,
           LAMBDA_FUNCTION_URL: lambda.url,
           ...oTelSharedSettings,
         },
